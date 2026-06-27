@@ -1,0 +1,77 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
+/**
+ * Centralized environment configuration.
+ * Loads all environment variables with sensible defaults for local development.
+ * In production, these should be set via the hosting platform's env management.
+ */
+export const env = {
+  // Server
+  PORT: parseInt(process.env.PORT || '5000', 10),
+  NODE_ENV: process.env.NODE_ENV || 'development',
+
+  // MongoDB
+  MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/ecommerce',
+
+  // Redis (used for OTP storage, token blacklisting, signup temp data)
+  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+
+  // JWT tokens
+  JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'access_secret',
+  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'refresh_secret',
+  JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
+  JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+
+  // Google OAuth 2.0
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET || '',
+  GOOGLE_CALLBACK_URL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback',
+
+  // Cloudinary (image uploads)
+  CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || '',
+  CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || '',
+  CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || '',
+
+  // SMTP (email delivery)
+  SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
+  SMTP_PORT: parseInt(process.env.SMTP_PORT || '587', 10),
+  SMTP_USER: process.env.SMTP_USER || '',
+  SMTP_PASS: process.env.SMTP_PASS || '',
+  FROM_EMAIL: process.env.FROM_EMAIL || 'noreply@ecommerce.com',
+
+  // Razorpay (payment gateway)
+  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID || '',
+  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || '',
+  RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+
+  // Frontend URL (used for CORS and OAuth redirects)
+  CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:3000',
+
+  // Business rules
+  REFERRAL_REWARD_AMOUNT: parseInt(process.env.REFERRAL_REWARD_AMOUNT || '100', 10),
+  LOW_STOCK_THRESHOLD: parseInt(process.env.LOW_STOCK_THRESHOLD || '5', 10),
+
+  // Delivery charges
+  DELIVERY_CHARGE: parseInt(process.env.DELIVERY_CHARGE || '40', 10),
+  FREE_DELIVERY_THRESHOLD: parseInt(process.env.FREE_DELIVERY_THRESHOLD || '499', 10),
+
+  // Seller state (for GST CGST/SGST vs IGST determination)
+  SELLER_STATE: process.env.SELLER_STATE || 'Maharashtra',
+
+  // Company details (for invoices)
+  COMPANY_NAME: process.env.COMPANY_NAME || 'Your E-Commerce Store',
+  COMPANY_ADDRESS: process.env.COMPANY_ADDRESS || '123, Business Park, Mumbai',
+  COMPANY_CITY_STATE_PIN: process.env.COMPANY_CITY_STATE_PIN || 'Maharashtra, India - 400001',
+  COMPANY_GSTIN: process.env.COMPANY_GSTIN || '27XXXXX1234X1Z5',
+  COMPANY_EMAIL: process.env.COMPANY_EMAIL || 'support@ecommerce.com',
+  COMPANY_PHONE: process.env.COMPANY_PHONE || '+91 9876543210',
+
+  // Admin seed
+  ADMIN_NAME: process.env.ADMIN_NAME || 'Super Admin',
+  ADMIN_EMAIL: process.env.ADMIN_EMAIL || 'admin@ecommerce.com',
+  ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'Admin@123',
+
+  // Cart limits
+  MAX_QUANTITY_PER_ITEM: parseInt(process.env.MAX_QUANTITY_PER_ITEM || '10', 10),
+};
