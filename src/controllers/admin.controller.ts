@@ -154,13 +154,58 @@ export const unblockUser = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
+/** Returns detailed user info with order stats for the admin user detail page. */
+export const getUserDetail = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const user = await User.findOne({ _id: req.params.id, isDeleted: false }).select('-password');
+    if (!user) throw new AppError('User not found', 404);
+
+    const [orderStats, recentOrders, walletData] = await Promise.all([
+      Order.aggregate([
+        { $match: { user: user._id } },
+        {
+          $group: {
+            _id: null,
+            totalOrders: { $sum: 1 },
+            totalSpent: { $sum: { $cond: [{ $eq: ['$paymentStatus', 'Paid'] }, '$totalAmount', 0] } },
+            lastOrderDate: { $max: '$createdAt' },
+          },
+        },
+      ]),
+      Order.find({ user: user._id })
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .select('orderId orderStatus paymentStatus totalAmount createdAt'),
+      Wallet.findOne({ user: user._id }).select('balance'),
+    ]);
+
+    const stats = orderStats[0] || { totalOrders: 0, totalSpent: 0, lastOrderDate: null };
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user,
+        stats: {
+          totalOrders: stats.totalOrders,
+          totalSpent: stats.totalSpent,
+          lastOrderDate: stats.lastOrderDate,
+          walletBalance: walletData?.balance || 0,
+        },
+        recentOrders,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // ─── Order Management (Admin) ────────────────────────────────────────────────
 
 /** Returns paginated list of all orders with optional status filter. */
 export const getAllOrders = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const page = parseInt(req.query.page as string || '1', 10);
-    const limit = Math.min(parseInt(req.query.limit as string || '20', 10), 100);
+    const limit = Math.min(parseInt(req.query.limit as string || '10', 10), 100);
     const skip = (page - 1) * limit;
     const status = req.query.status as string;
 

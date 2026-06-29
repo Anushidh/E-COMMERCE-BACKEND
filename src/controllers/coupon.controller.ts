@@ -24,11 +24,25 @@ export const createCoupon = async (req: Request, res: Response, next: NextFuncti
   }
 };
 
-/** Returns all active (non-deleted) coupons sorted by newest first. */
-export const getAllCoupons = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+/** Returns all active (non-deleted) coupons with pagination, sorted by newest first. */
+export const getAllCoupons = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const coupons = await Coupon.find({ isDeleted: false }).sort({ createdAt: -1 });
-    res.status(200).json({ success: true, data: coupons });
+    const page = parseInt(req.query.page as string || '1', 10);
+    const limit = Math.min(parseInt(req.query.limit as string || '20', 10), 100);
+    const skip = (page - 1) * limit;
+
+    const [coupons, total] = await Promise.all([
+      Coupon.find({ isDeleted: false }).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Coupon.countDocuments({ isDeleted: false }),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        coupons,
+        pagination: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -40,7 +54,11 @@ export const updateCoupon = async (req: Request, res: Response, next: NextFuncti
     const data = updateCouponSchema.parse(req.body);
     const updateData: any = { ...data };
     if (data.expiryDate) updateData.expiryDate = new Date(data.expiryDate);
-    if (data.code) updateData.code = data.code.toUpperCase();
+    if (data.code) {
+      updateData.code = data.code.toUpperCase();
+      const existing = await Coupon.findOne({ code: updateData.code, isDeleted: false, _id: { $ne: req.params.id } });
+      if (existing) throw new AppError('Coupon code already exists', 400);
+    }
 
     const coupon = await Coupon.findOneAndUpdate(
       { _id: req.params.id, isDeleted: false },
@@ -78,8 +96,13 @@ export const deleteCoupon = async (req: Request, res: Response, next: NextFuncti
  */
 export const applyCoupon = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { code, orderTotal } = req.body;
-    if (!code || !orderTotal) throw new AppError('Coupon code and order total required', 400);
+    const { code, orderTotal: rawTotal } = req.body;
+    if (!code) throw new AppError('Coupon code is required', 400);
+
+    const orderTotal = Number(rawTotal);
+    if (!orderTotal || isNaN(orderTotal) || orderTotal <= 0) {
+      throw new AppError('Valid order total is required', 400);
+    }
 
     const coupon = await Coupon.findOne({
       code: code.toUpperCase(),
@@ -125,18 +148,32 @@ export const applyCoupon = async (req: Request, res: Response, next: NextFunctio
 /**
  * Returns all currently active coupons visible to users.
  * Only shows non-expired, active, non-deleted coupons that still have usage remaining.
+ * Filters out coupons the current user has already used up to their per-user limit.
  */
 export const getAvailableCoupons = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const now = new Date();
+    const userId = req.user!.userId;
+
     const coupons = await Coupon.find({
       isActive: true,
       isDeleted: false,
       expiryDate: { $gte: now },
       $expr: { $lt: ['$totalUsed', '$totalUsageLimit'] },
-    }).select('code discountType discountValue minOrderValue maxDiscount expiryDate');
+    }).select('code discountType discountValue minOrderValue maxDiscount expiryDate usageLimitPerUser usedBy');
 
-    res.status(200).json({ success: true, data: coupons });
+    // Filter out coupons where the user has hit their per-user limit
+    const available = coupons.filter((coupon) => {
+      const userUsage = coupon.usedBy.find((u) => u.user.toString() === userId);
+      return !userUsage || userUsage.count < coupon.usageLimitPerUser;
+    });
+
+    // Remove usedBy from response (internal data)
+    const result = available.map(({ _id, code, discountType, discountValue, minOrderValue, maxDiscount, expiryDate }) => ({
+      _id, code, discountType, discountValue, minOrderValue, maxDiscount, expiryDate,
+    }));
+
+    res.status(200).json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

@@ -162,25 +162,33 @@ export const placeOrder = async (req: Request, res: Response, next: NextFunction
       );
     }
 
-    // Compute wallet deduction amount (don't persist yet)
-    let walletAmountUsed = 0;
-    if (data.useWallet) {
-      const wallet = await Wallet.findOne({ user: userId }).session(session);
-      if (wallet && wallet.balance > 0) {
-        const remainingAmount = safeSubtract(safeSubtract(subtotal, totalOfferDiscount), couponDiscount);
-        walletAmountUsed = Math.min(wallet.balance, Math.max(remainingAmount, 0));
-      }
-    }
-
     // Calculate delivery charge (free above threshold, otherwise flat rate)
     const afterDiscountsTotal = safeSubtract(safeSubtract(subtotal, totalOfferDiscount), couponDiscount);
     const shippingCharge = calculateDeliveryCharge(afterDiscountsTotal, env.FREE_DELIVERY_THRESHOLD, env.DELIVERY_CHARGE);
 
-    // Final total = subtotal - offers - coupon - wallet + shipping
+    // Compute wallet deduction amount (don't persist yet)
+    let walletAmountUsed = 0;
+    if (data.paymentMethod === 'wallet' || data.useWallet) {
+      const wallet = await Wallet.findOne({ user: userId }).session(session);
+      const amountToPay = safeAdd(afterDiscountsTotal, shippingCharge);
+
+      if (data.paymentMethod === 'wallet') {
+        // Full wallet payment — must cover entire amount including shipping
+        if (!wallet || wallet.balance < amountToPay) {
+          throw new AppError('Insufficient wallet balance to pay for this order', 400);
+        }
+        walletAmountUsed = amountToPay;
+      } else if (wallet && wallet.balance > 0) {
+        // Partial wallet — cover as much as possible including shipping
+        walletAmountUsed = Math.min(wallet.balance, Math.max(amountToPay, 0));
+      }
+    }
+
+    // Final total = subtotal - offers - coupon + shipping - wallet
     const totalAmount = Math.max(
-      safeAdd(
-        safeSubtract(safeSubtract(safeSubtract(subtotal, totalOfferDiscount), couponDiscount), walletAmountUsed),
-        shippingCharge
+      safeSubtract(
+        safeAdd(afterDiscountsTotal, shippingCharge),
+        walletAmountUsed
       ),
       0
     );
@@ -189,6 +197,9 @@ export const placeOrder = async (req: Request, res: Response, next: NextFunction
     if (data.paymentMethod === 'cod' && totalAmount < 500) {
       throw new AppError('Cash on Delivery is only available for orders above ₹500', 400);
     }
+
+    // Wallet-only payment: totalAmount should be 0 (wallet covers everything)
+    const paymentStatus = data.paymentMethod === 'wallet' ? 'Paid' : 'Pending';
 
     // ─── All validations passed. Start atomic writes within the transaction ───
 
@@ -207,37 +218,40 @@ export const placeOrder = async (req: Request, res: Response, next: NextFunction
 
     // 2. Atomic coupon usage increment
     if (couponDoc) {
-      const couponUpdate = await Coupon.findOneAndUpdate(
-        {
-          _id: couponDoc._id,
-          totalUsed: { $lt: couponDoc.totalUsageLimit },
-        },
-        {
-          $inc: { totalUsed: 1 },
-          $push: { usedBy: { user: userId, count: 1 } },
-        },
-        { new: true, session }
-      );
+      // Check if user already has a usedBy entry
+      const existingEntry = couponDoc.usedBy.find((u: any) => u.user.toString() === userId);
 
-      // If user already has a usedBy entry, increment instead
-      if (!couponUpdate) {
-        throw new AppError('Coupon usage limit reached', 400);
+      let couponUpdate;
+      if (existingEntry) {
+        // Increment existing user's count
+        couponUpdate = await Coupon.findOneAndUpdate(
+          {
+            _id: couponDoc._id,
+            totalUsed: { $lt: couponDoc.totalUsageLimit },
+            'usedBy.user': userId,
+          },
+          {
+            $inc: { totalUsed: 1, 'usedBy.$.count': 1 },
+          },
+          { new: true, session }
+        );
+      } else {
+        // Add new user entry
+        couponUpdate = await Coupon.findOneAndUpdate(
+          {
+            _id: couponDoc._id,
+            totalUsed: { $lt: couponDoc.totalUsageLimit },
+          },
+          {
+            $inc: { totalUsed: 1 },
+            $push: { usedBy: { user: userId, count: 1 } },
+          },
+          { new: true, session }
+        );
       }
 
-      // Check if user entry already existed and needs count increment instead of push
-      const existingEntry = couponDoc.usedBy.find((u: any) => u.user.toString() === userId);
-      if (existingEntry) {
-        await Coupon.findOneAndUpdate(
-          { _id: couponDoc._id, 'usedBy.user': userId },
-          { $inc: { 'usedBy.$.count': 1 }, $set: {} },
-          { session }
-        );
-        // Undo the push we just did
-        await Coupon.findOneAndUpdate(
-          { _id: couponDoc._id },
-          { $pull: { usedBy: { user: userId, count: 1 } } },
-          { session }
-        );
+      if (!couponUpdate) {
+        throw new AppError('Coupon usage limit reached', 400);
       }
     }
 
@@ -287,7 +301,7 @@ export const placeOrder = async (req: Request, res: Response, next: NextFunction
       isInterState,
       totalAmount,
       paymentMethod: data.paymentMethod,
-      paymentStatus: 'Pending',
+      paymentStatus,
       orderStatus: 'Placed',
       statusHistory: [{ status: 'Placed', timestamp: new Date() }],
     }], { session });
@@ -301,47 +315,56 @@ export const placeOrder = async (req: Request, res: Response, next: NextFunction
     // ─── Post-transaction operations (non-critical, outside transaction) ───
 
     if (data.paymentMethod === 'razorpay') {
-      const razorpayOrder = await razorpay.orders.create({
-        amount: new Decimal(order.totalAmount).mul(100).round().toNumber(),
-        currency: 'INR',
-        receipt: orderId,
-      });
-
-      order.razorpayOrderId = razorpayOrder.id;
-      await order.save();
-
-      await Payment.create({
-        order: order._id,
-        user: userId,
-        razorpayOrderId: razorpayOrder.id,
-        amount: order.totalAmount,
-        status: 'created',
-      });
-
-      res.status(201).json({
-        success: true,
-        data: {
-          order,
-          razorpayOrder: {
-            id: razorpayOrder.id,
-            amount: razorpayOrder.amount,
-            currency: razorpayOrder.currency,
-          },
-        },
-      });
-    } else {
-      await sendOrderConfirmationEmail(user.email, orderId, order.totalAmount);
-      // Generate and send invoice (non-blocking — don't fail the order if invoice fails)
       try {
+        const razorpayOrder = await razorpay.orders.create({
+          amount: new Decimal(order.totalAmount).mul(100).round().toNumber(),
+          currency: 'INR',
+          receipt: orderId,
+        });
+
+        order.razorpayOrderId = razorpayOrder.id;
+        await order.save();
+
+        await Payment.create({
+          order: order._id,
+          user: userId,
+          razorpayOrderId: razorpayOrder.id,
+          amount: order.totalAmount,
+          status: 'created',
+        });
+
+        res.status(201).json({
+          success: true,
+          data: {
+            order,
+            razorpayOrder: {
+              id: razorpayOrder.id,
+              amount: razorpayOrder.amount,
+              currency: razorpayOrder.currency,
+            },
+          },
+        });
+      } catch (razorpayErr: any) {
+        console.error('Razorpay order creation failed:', razorpayErr?.error || razorpayErr?.message || razorpayErr);
+        // Order is placed but payment setup failed — user can retry
+        res.status(201).json({ success: true, data: { order, razorpayError: razorpayErr?.error?.description || 'Payment setup failed' } });
+      }
+    } else {
+      // COD or Wallet — order is placed immediately
+      // Send email/invoice (non-blocking — don't fail the response)
+      try {
+        await sendOrderConfirmationEmail(user.email, orderId, order.totalAmount);
         const { invoiceId, pdfUrl } = await createInvoice(order);
         await sendInvoiceEmail(user.email, orderId, invoiceId, pdfUrl);
-      } catch (invoiceErr) {
-        console.error('Invoice generation failed (non-blocking):', invoiceErr);
+      } catch (postErr) {
+        console.error('Post-order notification failed (non-blocking):', postErr);
       }
       res.status(201).json({ success: true, data: { order } });
     }
   } catch (error) {
-    await session.abortTransaction();
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
     next(error);
   } finally {
     session.endSession();
@@ -371,6 +394,14 @@ export const verifyPayment = async (req: Request, res: Response, next: NextFunct
     const order = await Order.findOne({ razorpayOrderId: razorpay_order_id, user: req.user!.userId });
     if (!order) throw new AppError('Order not found', 404);
 
+    if (order.orderStatus === 'Cancelled') {
+      throw new AppError('This order has been cancelled. Payment cannot be processed.', 400);
+    }
+
+    if (order.paymentStatus === 'Paid') {
+      throw new AppError('Payment has already been completed for this order', 400);
+    }
+
     await Payment.findOneAndUpdate(
       { razorpayOrderId: razorpay_order_id },
       { razorpayPaymentId: razorpay_payment_id, razorpaySignature: razorpay_signature, status: 'captured' }
@@ -393,6 +424,67 @@ export const verifyPayment = async (req: Request, res: Response, next: NextFunct
     }
 
     res.status(200).json({ success: true, message: 'Payment verified successfully' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Retries payment for a failed/pending Razorpay order.
+ * Creates a new Razorpay order for the same internal order.
+ * Only allowed for orders with paymentMethod 'razorpay' and paymentStatus 'Pending' or 'Failed'.
+ */
+export const retryPayment = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const order = await Order.findOne({ _id: req.params.id, user: req.user!.userId });
+    if (!order) throw new AppError('Order not found', 404);
+
+    if (order.paymentMethod !== 'razorpay') {
+      throw new AppError('Payment retry is only available for online payment orders', 400);
+    }
+
+    if (!['Pending', 'Failed'].includes(order.paymentStatus)) {
+      throw new AppError('Payment has already been completed for this order', 400);
+    }
+
+    if (order.orderStatus === 'Cancelled') {
+      throw new AppError('This order has been cancelled', 400);
+    }
+
+    // Create a new Razorpay order
+    const razorpayOrder = await razorpay.orders.create({
+      amount: new Decimal(order.totalAmount).mul(100).round().toNumber(),
+      currency: 'INR',
+      receipt: order.orderId,
+    });
+
+    // Update order with new Razorpay order ID
+    order.razorpayOrderId = razorpayOrder.id;
+    order.paymentStatus = 'Pending';
+    await order.save();
+
+    // Update or create payment record
+    await Payment.findOneAndUpdate(
+      { order: order._id },
+      {
+        razorpayOrderId: razorpayOrder.id,
+        amount: order.totalAmount,
+        status: 'created',
+      },
+      { upsert: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        order,
+        razorpayOrder: {
+          id: razorpayOrder.id,
+          amount: razorpayOrder.amount,
+          currency: razorpayOrder.currency,
+        },
+      },
+    });
   } catch (error) {
     next(error);
   }
@@ -437,8 +529,9 @@ export const razorpayWebhook = async (req: Request, res: Response, next: NextFun
         { razorpayOrderId: payment.order_id, status: { $ne: 'captured' } },
         { razorpayPaymentId: payment.id, status: 'captured', method: payment.method }
       );
+      // Only mark as Paid if order hasn't been cancelled
       await Order.findOneAndUpdate(
-        { razorpayOrderId: payment.order_id },
+        { razorpayOrderId: payment.order_id, orderStatus: { $ne: 'Cancelled' } },
         { paymentStatus: 'Paid', razorpayPaymentId: payment.id }
       );
     } else if (event === 'payment.failed') {
@@ -447,7 +540,7 @@ export const razorpayWebhook = async (req: Request, res: Response, next: NextFun
         { status: 'failed' }
       );
       await Order.findOneAndUpdate(
-        { razorpayOrderId: payment.order_id },
+        { razorpayOrderId: payment.order_id, orderStatus: { $ne: 'Cancelled' } },
         { paymentStatus: 'Failed' }
       );
     }
@@ -485,7 +578,13 @@ export const getUserOrders = async (req: Request, res: Response, next: NextFunct
 /** Returns full details of a specific order including populated product/variant info. */
 export const getOrderById = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const order = await Order.findOne({ _id: req.params.id, user: req.user!.userId })
+    const query: any = { _id: req.params.id };
+    // Admin can view any order; users can only view their own
+    if (req.user!.role !== 'admin') {
+      query.user = req.user!.userId;
+    }
+
+    const order = await Order.findOne(query)
       .populate('items.product', 'name images')
       .populate('items.variant', 'size color');
 
@@ -540,8 +639,9 @@ export const cancelOrder = async (req: Request, res: Response, next: NextFunctio
     }
 
     // Refund to wallet if payment was made
+    let refundAmount = 0;
     if (order.paymentStatus === 'Paid' || order.walletAmountUsed > 0) {
-      const refundAmount = order.paymentStatus === 'Paid'
+      refundAmount = order.paymentStatus === 'Paid'
         ? safeAdd(order.totalAmount, order.walletAmountUsed)
         : order.walletAmountUsed;
 
@@ -571,17 +671,18 @@ export const cancelOrder = async (req: Request, res: Response, next: NextFunctio
     await session.commitTransaction();
 
     // Send email outside transaction
-    const user = await User.findById(req.user!.userId);
-    if (user && order.paymentStatus === 'Refunded') {
-      const refundAmount = order.paymentStatus === 'Refunded'
-        ? safeAdd(order.totalAmount, order.walletAmountUsed)
-        : order.walletAmountUsed;
-      await sendRefundEmail(user.email, order.orderId, refundAmount);
+    if (refundAmount > 0) {
+      const user = await User.findById(req.user!.userId);
+      if (user) {
+        await sendRefundEmail(user.email, order.orderId, refundAmount);
+      }
     }
 
     res.status(200).json({ success: true, message: 'Order cancelled successfully' });
   } catch (error) {
-    await session.abortTransaction();
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
     next(error);
   } finally {
     session.endSession();
@@ -603,11 +704,13 @@ export const requestReturn = async (req: Request, res: Response, next: NextFunct
     }
 
     // Enforce return window
-    if (order.deliveredAt) {
-      const daysSinceDelivery = (Date.now() - order.deliveredAt.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSinceDelivery > RETURN_WINDOW_DAYS) {
-        throw new AppError(`Return window of ${RETURN_WINDOW_DAYS} days has expired`, 400);
-      }
+    const deliveryDate = order.deliveredAt || order.statusHistory.find((s: any) => s.status === 'Delivered')?.timestamp;
+    if (!deliveryDate) {
+      throw new AppError('Unable to determine delivery date', 400);
+    }
+    const daysSinceDelivery = (Date.now() - new Date(deliveryDate).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceDelivery > RETURN_WINDOW_DAYS) {
+      throw new AppError(`Return window of ${RETURN_WINDOW_DAYS} days has expired`, 400);
     }
 
     order.orderStatus = 'Return Requested';
@@ -629,7 +732,12 @@ export const getOrderInvoice = async (req: Request, res: Response, next: NextFun
   try {
     const { default: Invoice } = await import('../models/Invoice');
 
-    const order = await Order.findOne({ _id: req.params.id, user: req.user!.userId });
+    const query: any = { _id: req.params.id };
+    if (req.user!.role !== 'admin') {
+      query.user = req.user!.userId;
+    }
+
+    const order = await Order.findOne(query);
     if (!order) throw new AppError('Order not found', 404);
 
     if (!['Placed', 'Confirmed', 'Shipped', 'Out for Delivery', 'Delivered'].includes(order.orderStatus)) {

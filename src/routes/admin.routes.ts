@@ -5,6 +5,7 @@ import {
   adminLogin,
   adminLogout,
   getAllUsers,
+  getUserDetail,
   blockUser,
   unblockUser,
   getAllOrders,
@@ -32,6 +33,7 @@ router.get('/dashboard', getDashboardStats);
 
 // Users
 router.get('/users', getAllUsers);
+router.get('/users/:id', getUserDetail);
 router.patch('/users/:id/block', blockUser);
 router.patch('/users/:id/unblock', unblockUser);
 

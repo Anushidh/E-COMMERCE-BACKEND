@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const placeOrderSchema = z.object({
   addressId: z.string().min(1),
-  paymentMethod: z.enum(['razorpay', 'cod']),
+  paymentMethod: z.enum(['razorpay', 'cod', 'wallet']),
   couponCode: z.string().optional(),
   useWallet: z.boolean().optional(),
 });

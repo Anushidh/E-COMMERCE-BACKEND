@@ -3,6 +3,7 @@ import { authenticate } from '../middlewares/auth';
 import {
   placeOrder,
   verifyPayment,
+  retryPayment,
   razorpayWebhook,
   getUserOrders,
   getOrderById,
@@ -20,6 +21,7 @@ router.use(authenticate);
 
 router.post('/', placeOrder);
 router.post('/verify-payment', verifyPayment);
+router.post('/:id/retry-payment', retryPayment);
 router.get('/', getUserOrders);
 router.get('/:id', getOrderById);
 router.get('/:id/invoice', getOrderInvoice);

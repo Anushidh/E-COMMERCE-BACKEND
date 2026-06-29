@@ -293,6 +293,7 @@ export const addVariant = async (req: Request, res: Response, next: NextFunction
 
     const variant = await Variant.create({ ...data, product: productId });
 
+    await invalidateCache('cache:/api/products*');
     res.status(201).json({ success: true, data: variant });
   } catch (error) {
     next(error);
@@ -328,6 +329,7 @@ export const updateVariant = async (req: Request, res: Response, next: NextFunct
       await Product.findByIdAndUpdate(variant.product, { status: 'Active' });
     }
 
+    await invalidateCache('cache:/api/products*');
     res.status(200).json({ success: true, data: variant });
   } catch (error) {
     next(error);
@@ -346,6 +348,7 @@ export const deleteVariant = async (req: Request, res: Response, next: NextFunct
     );
     if (!variant) throw new AppError('Variant not found', 404);
 
+    await invalidateCache('cache:/api/products*');
     res.status(200).json({ success: true, message: 'Variant deleted successfully' });
   } catch (error) {
     next(error);
@@ -423,6 +426,7 @@ export const adjustStock = async (req: Request, res: Response, next: NextFunctio
       await Product.findByIdAndUpdate(variant.product, { status: 'Active' });
     }
 
+    await invalidateCache('cache:/api/products*');
     res.status(200).json({
       success: true,
       message: `Stock ${adjustment > 0 ? 'increased' : 'decreased'} by ${Math.abs(adjustment)}. New stock: ${variant.stock}`,

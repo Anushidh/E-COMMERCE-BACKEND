@@ -4,7 +4,6 @@ import Counter from '../models/Counter';
 import Invoice from '../models/Invoice';
 import cloudinary from '../config/cloudinary';
 import { env } from '../config/env';
-import { Readable } from 'stream';
 import { safeSubtract } from './helpers';
 
 /**
@@ -57,22 +56,21 @@ export const generateInvoicePDF = async (order: IOrder, invoiceId: string): Prom
       try {
         const pdfBuffer = Buffer.concat(chunks);
 
-        // Upload to Cloudinary
+        // Upload to Cloudinary using buffer
         const uploadResult = await new Promise<any>((res, rej) => {
-          const stream = cloudinary.uploader.upload_stream(
+          cloudinary.uploader.upload_stream(
             {
               folder: 'ecommerce/invoices',
               resource_type: 'raw',
-              public_id: invoiceId.replace(/\//g, '-'),
-              format: 'pdf',
+              type: 'upload',
+              public_id: `${invoiceId.replace(/\//g, '-')}.pdf`,
+              overwrite: true,
             },
             (error, result) => {
               if (error) rej(error);
               else res(result);
             }
-          );
-          const readable = Readable.from(pdfBuffer);
-          readable.pipe(stream);
+          ).end(pdfBuffer);
         });
 
         resolve(uploadResult.secure_url);
@@ -90,31 +88,34 @@ export const generateInvoicePDF = async (order: IOrder, invoiceId: string): Prom
 
     // Header
     doc.fontSize(20).font('Helvetica-Bold').text('TAX INVOICE', { align: 'center' });
-    doc.moveDown(0.5);
+    doc.moveDown(1);
 
-    // Company info (left) and Invoice info (right)
+    // Company info (left)
+    const companyStartY = doc.y;
     doc.fontSize(9).font('Helvetica-Bold');
     doc.text(env.COMPANY_NAME, leftMargin, doc.y);
     doc.font('Helvetica').fontSize(8);
     doc.text(env.COMPANY_ADDRESS);
     doc.text(env.COMPANY_CITY_STATE_PIN);
     doc.text(`GSTIN: ${env.COMPANY_GSTIN}`);
-    doc.text(`Email: ${env.COMPANY_EMAIL} | Phone: ${env.COMPANY_PHONE}`);
+    doc.text(`Email: ${env.COMPANY_EMAIL}`);
+    doc.text(`Phone: ${env.COMPANY_PHONE}`);
+    const companyEndY = doc.y;
 
-    // Invoice details (right side)
-    const invoiceInfoY = doc.y - 50;
+    // Invoice details (right side — positioned at same start as company)
     doc.fontSize(9).font('Helvetica-Bold');
-    doc.text(`Invoice No: ${invoiceId}`, 350, invoiceInfoY, { width: 200, align: 'right' });
+    doc.text(`Invoice No: ${invoiceId}`, 350, companyStartY, { width: 200, align: 'right' });
     doc.font('Helvetica').fontSize(8);
     doc.text(`Date: ${new Date().toLocaleDateString('en-IN')}`, 350, doc.y, { width: 200, align: 'right' });
     doc.text(`Order ID: ${order.orderId}`, 350, doc.y, { width: 200, align: 'right' });
 
-    doc.moveDown(1);
+    // Move to after whichever side is taller
+    doc.y = Math.max(companyEndY, doc.y) + 10;
     const lineY = doc.y;
     doc.moveTo(leftMargin, lineY).lineTo(leftMargin + pageWidth, lineY).stroke();
     doc.moveDown(0.5);
 
-    // Billing/Shipping Address
+    // Shipping Address
     doc.fontSize(9).font('Helvetica-Bold').text('Ship To:', leftMargin, doc.y);
     doc.font('Helvetica').fontSize(8);
     doc.text(order.shippingAddress.fullName);

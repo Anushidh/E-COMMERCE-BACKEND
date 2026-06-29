@@ -46,7 +46,7 @@ export interface IOrder extends Document {
   totalTax: number;
   isInterState: boolean;
   totalAmount: number;
-  paymentMethod: 'razorpay' | 'cod';
+  paymentMethod: 'razorpay' | 'cod' | 'wallet';
   paymentStatus: 'Pending' | 'Paid' | 'Failed' | 'Refunded';
   orderStatus: 'Placed' | 'Confirmed' | 'Shipped' | 'Out for Delivery' | 'Delivered' | 'Cancelled' | 'Return Requested' | 'Returned';
   statusHistory: IStatusHistory[];
@@ -103,7 +103,7 @@ const orderSchema = new Schema<IOrder>(
     totalTax: { type: Number, default: 0 },
     isInterState: { type: Boolean, default: false },
     totalAmount: { type: Number, required: true },
-    paymentMethod: { type: String, enum: ['razorpay', 'cod'], required: true },
+    paymentMethod: { type: String, enum: ['razorpay', 'cod', 'wallet'], required: true },
     paymentStatus: { type: String, enum: ['Pending', 'Paid', 'Failed', 'Refunded'], default: 'Pending' },
     orderStatus: {
       type: String,

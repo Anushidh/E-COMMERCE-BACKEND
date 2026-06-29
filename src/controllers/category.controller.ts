@@ -11,8 +11,13 @@ export const createCategory = async (req: Request, res: Response, next: NextFunc
     const data = createCategorySchema.parse(req.body);
     const imageUrl = req.file ? (req.file as any).path : undefined;
 
-    const existing = await Category.findOne({ name: data.name, isDeleted: false });
-    if (existing) throw new AppError('Category already exists', 400);
+    const existing = await Category.findOne({ name: data.name });
+    if (existing) {
+      if (existing.isDeleted) {
+        throw new AppError('A deleted category with this name exists. Use a different name.', 400);
+      }
+      throw new AppError('Category already exists', 400);
+    }
 
     const category = await Category.create({ ...data, image: imageUrl });
 
