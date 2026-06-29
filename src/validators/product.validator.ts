@@ -6,8 +6,13 @@ export const createProductSchema = z.object({
   brand: z.string().optional(),
   category: z.string().min(1),
   gender: z.enum(['Men', 'Women', 'Unisex']),
-  basePrice: z.number().min(0),
-  gstRate: z.number().refine((v) => [0, 5, 12, 18, 28].includes(v), 'GST rate must be 0, 5, 12, 18, or 28'),
+  basePrice: z.coerce.number().min(0),
+  gstRate: z.coerce
+    .number()
+    .refine(
+      (v) => [0, 5, 12, 18, 28].includes(v),
+      'GST rate must be 0, 5, 12, 18, or 28'
+    ),
   status: z.enum(['Active', 'Inactive', 'Out of Stock']).optional(),
 });
 
