@@ -132,6 +132,7 @@ export const verifySignupOTP = async (req: Request, res: Response, next: NextFun
       data: {
         user: { id: user._id, name: user.name, email: user.email, role: 'user' },
         accessToken,
+        refreshToken,
       },
     });
   } catch (error) {
@@ -177,6 +178,7 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
       data: {
         user: { id: user._id, name: user.name, email: user.email, role: 'user' },
         accessToken,
+        refreshToken,
       },
     });
   } catch (error) {
@@ -190,7 +192,7 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
  */
 export const refreshToken = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const token = req.cookies?.refreshToken;
+    const token = req.cookies?.refreshToken || req.body?.refreshToken;
     if (!token) {
       throw new AppError('Refresh token required', 400);
     }
@@ -215,7 +217,7 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 
     res.status(200).json({
       success: true,
-      data: { accessToken },
+      data: { accessToken, refreshToken: newRefreshToken },
     });
   } catch (error) {
     next(error);

@@ -55,6 +55,7 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
       data: {
         admin: { id: admin._id, name: admin.name, email: admin.email },
         accessToken,
+        refreshToken,
       },
     });
   } catch (error) {

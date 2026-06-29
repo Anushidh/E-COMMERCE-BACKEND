@@ -29,6 +29,7 @@ export const createVariantSchema = z.object({
 export const productFilterSchema = z.object({
   category: z.string().optional(),
   gender: z.enum(['Men', 'Women', 'Unisex']).optional(),
+  status: z.enum(['Active', 'Inactive', 'Out of Stock', 'all']).optional(),
   minPrice: z.string().optional(),
   maxPrice: z.string().optional(),
   size: z.string().optional(),

@@ -79,6 +79,8 @@ export const updateProduct = async (req: Request, res: Response, next: NextFunct
     );
     if (!product) throw new AppError('Product not found', 404);
 
+    await invalidateCache('cache:/api/products*');
+
     res.status(200).json({ success: true, data: product });
   } catch (error) {
     next(error);
@@ -204,7 +206,13 @@ export const getProducts = async (req: Request, res: Response, next: NextFunctio
     const limit = Math.min(parseInt(filters.limit || '12', 10), 50);
     const { skip } = paginationHelper(page, limit);
 
-    const query: any = { isDeleted: false, status: 'Active' };
+    const query: any = { isDeleted: false };
+
+    if (filters.status && filters.status !== 'all') {
+      query.status = filters.status;
+    } else if (!filters.status) {
+      query.status = 'Active';
+    }
 
     if (filters.category) query.category = filters.category;
     if (filters.gender) query.gender = filters.gender;
@@ -216,7 +224,11 @@ export const getProducts = async (req: Request, res: Response, next: NextFunctio
     if (filters.rating) query.averageRating = { $gte: parseFloat(filters.rating) };
 
     if (filters.search) {
-      query.$text = { $search: filters.search };
+      query.$or = [
+        { name: { $regex: filters.search, $options: 'i' } },
+        { brand: { $regex: filters.search, $options: 'i' } },
+        { description: { $regex: filters.search, $options: 'i' } },
+      ];
     }
 
     // Handle size/color filter via variants
