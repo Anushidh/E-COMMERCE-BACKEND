@@ -14,6 +14,8 @@ import {
   blacklistToken,
   isTokenBlacklisted,
   invalidateRefreshToken,
+  setRefreshTokenCookie,
+  clearRefreshTokenCookie,
 } from '../utils/token';
 import {
   signupSchema,
@@ -122,13 +124,14 @@ export const verifySignupOTP = async (req: Request, res: Response, next: NextFun
     const accessToken = generateAccessToken({ userId: user._id.toString(), role: 'user' });
     const refreshToken = await generateRefreshToken({ userId: user._id.toString(), role: 'user' });
 
+    setRefreshTokenCookie(res, refreshToken);
+
     res.status(201).json({
       success: true,
       message: 'Account created successfully',
       data: {
         user: { id: user._id, name: user.name, email: user.email, role: 'user' },
         accessToken,
-        refreshToken,
       },
     });
   } catch (error) {
@@ -166,13 +169,14 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
     const accessToken = generateAccessToken({ userId: user._id.toString(), role: 'user' });
     const refreshToken = await generateRefreshToken({ userId: user._id.toString(), role: 'user' });
 
+    setRefreshTokenCookie(res, refreshToken);
+
     res.status(200).json({
       success: true,
       message: 'Login successful',
       data: {
         user: { id: user._id, name: user.name, email: user.email, role: 'user' },
         accessToken,
-        refreshToken,
       },
     });
   } catch (error) {
@@ -186,7 +190,7 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
  */
 export const refreshToken = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { refreshToken: token } = req.body;
+    const token = req.cookies?.refreshToken;
     if (!token) {
       throw new AppError('Refresh token required', 400);
     }
@@ -207,9 +211,11 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 
     const accessToken = generateAccessToken({ userId: payload.userId, role: payload.role });
 
+    setRefreshTokenCookie(res, newRefreshToken);
+
     res.status(200).json({
       success: true,
-      data: { accessToken, refreshToken: newRefreshToken },
+      data: { accessToken },
     });
   } catch (error) {
     next(error);
@@ -227,11 +233,13 @@ export const logout = async (req: Request, res: Response, next: NextFunction): P
       await blacklistToken(token, 15 * 60); // access token lifetime
     }
 
-    // Invalidate refresh token if provided
-    const { refreshToken: rToken } = req.body || {};
+    // Invalidate refresh token from cookie
+    const rToken = req.cookies?.refreshToken;
     if (rToken) {
       await invalidateRefreshToken(rToken);
     }
+
+    clearRefreshTokenCookie(res);
 
     res.status(200).json({
       success: true,
@@ -386,9 +394,11 @@ export const googleCallback = async (req: Request, res: Response, next: NextFunc
     const accessToken = generateAccessToken({ userId: passportUser.userId, role: passportUser.role });
     const refreshToken = await generateRefreshToken({ userId: passportUser.userId, role: passportUser.role });
 
-    // Redirect to frontend with tokens
+    setRefreshTokenCookie(res, refreshToken);
+
+    // Redirect to frontend with access token only
     res.redirect(
-      `${env.CLIENT_URL}/auth/callback?accessToken=${accessToken}&refreshToken=${refreshToken}`
+      `${env.CLIENT_URL}/auth/callback?accessToken=${accessToken}`
     );
   } catch (error) {
     next(error);

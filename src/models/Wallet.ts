@@ -15,6 +15,4 @@ const walletSchema = new Schema<IWallet>(
   { timestamps: true }
 );
 
-walletSchema.index({ user: 1 });
-
 export default mongoose.model<IWallet>('Wallet', walletSchema);

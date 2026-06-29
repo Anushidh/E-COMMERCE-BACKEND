@@ -11,7 +11,7 @@ import Wallet from '../models/Wallet';
 import WalletTransaction from '../models/WalletTransaction';
 import Referral from '../models/Referral';
 import { AppError } from '../utils/AppError';
-import { generateAccessToken, generateRefreshToken, blacklistToken, invalidateRefreshToken } from '../utils/token';
+import { generateAccessToken, generateRefreshToken, blacklistToken, invalidateRefreshToken, setRefreshTokenCookie, clearRefreshTokenCookie } from '../utils/token';
 import { loginSchema } from '../validators/auth.validator';
 import { updateOrderStatusSchema } from '../validators/order.validator';
 import { sendOrderStatusEmail, sendRefundEmail } from '../utils/email';
@@ -47,13 +47,14 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
     const accessToken = generateAccessToken({ userId: admin._id.toString(), role: 'admin' });
     const refreshToken = await generateRefreshToken({ userId: admin._id.toString(), role: 'admin' });
 
+    setRefreshTokenCookie(res, refreshToken);
+
     res.status(200).json({
       success: true,
       message: 'Admin login successful',
       data: {
         admin: { id: admin._id, name: admin.name, email: admin.email },
         accessToken,
-        refreshToken,
       },
     });
   } catch (error) {
@@ -73,11 +74,13 @@ export const adminLogout = async (req: Request, res: Response, next: NextFunctio
       await blacklistToken(token, 15 * 60);
     }
 
-    // Invalidate refresh token if provided
-    const { refreshToken } = req.body || {};
+    // Invalidate refresh token from cookie
+    const refreshToken = req.cookies?.refreshToken;
     if (refreshToken) {
       await invalidateRefreshToken(refreshToken);
     }
+
+    clearRefreshTokenCookie(res);
 
     res.status(200).json({
       success: true,

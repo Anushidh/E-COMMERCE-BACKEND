@@ -30,8 +30,6 @@ const invoiceSchema = new Schema<IInvoice>(
   { timestamps: true }
 );
 
-invoiceSchema.index({ order: 1 });
 invoiceSchema.index({ user: 1 });
-invoiceSchema.index({ invoiceId: 1 });
 
 export default mongoose.model<IInvoice>('Invoice', invoiceSchema);

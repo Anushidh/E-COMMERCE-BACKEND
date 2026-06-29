@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
+import { Response } from 'express';
 import { env } from '../config/env';
 import { redis } from '../config/redis';
 
@@ -79,4 +80,29 @@ export const isTokenBlacklisted = async (token: string): Promise<boolean> => {
 /** Invalidates a refresh token stored in Redis. */
 export const invalidateRefreshToken = async (tokenId: string): Promise<void> => {
   await redis.del(`refresh:${tokenId}`);
+};
+
+/**
+ * Sets the refresh token as an HttpOnly secure cookie on the response.
+ * The cookie is not accessible via JavaScript, mitigating XSS-based token theft.
+ */
+export const setRefreshTokenCookie = (res: Response, refreshToken: string): void => {
+  res.cookie('refreshToken', refreshToken, {
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    path: '/api/auth',
+    maxAge: REFRESH_TOKEN_EXPIRY_SECONDS * 1000, // ms
+  });
+};
+
+/** Clears the refresh token cookie (used on logout). */
+export const clearRefreshTokenCookie = (res: Response): void => {
+  res.cookie('refreshToken', '', {
+    httpOnly: true,
+    secure: env.NODE_ENV === 'production',
+    sameSite: env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    path: '/api/auth',
+    maxAge: 0,
+  });
 };

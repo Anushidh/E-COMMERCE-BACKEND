@@ -40,7 +40,6 @@ const productSchema = new Schema<IProduct>(
 );
 
 productSchema.index({ name: 'text', description: 'text', brand: 'text' });
-productSchema.index({ slug: 1 });
 productSchema.index({ category: 1, isDeleted: 1 });
 productSchema.index({ gender: 1, isDeleted: 1 });
 productSchema.index({ status: 1, isDeleted: 1 });

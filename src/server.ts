@@ -4,11 +4,13 @@ import { connectDB } from './config/db';
 import { env } from './config/env';
 import { redis } from './config/redis';
 import { registerCronJobs } from './jobs/cron';
+import { seedAdmin } from './scripts/seedAdmin';
 import './config/passport'; // Initialize Passport strategies
 
 const startServer = async (): Promise<void> => {
   try {
     await connectDB();
+    await seedAdmin();
 
     const server = http.createServer(app);
 

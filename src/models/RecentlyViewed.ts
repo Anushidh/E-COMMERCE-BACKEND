@@ -22,6 +22,4 @@ const recentlyViewedSchema = new Schema<IRecentlyViewed>(
   { timestamps: true }
 );
 
-recentlyViewedSchema.index({ user: 1 });
-
 export default mongoose.model<IRecentlyViewed>('RecentlyViewed', recentlyViewedSchema);

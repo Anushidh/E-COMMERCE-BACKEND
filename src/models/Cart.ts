@@ -39,7 +39,6 @@ const cartSchema = new Schema<ICart>(
   { timestamps: true }
 );
 
-cartSchema.index({ user: 1 });
 cartSchema.index({ isAbandoned: 1, lastActivityAt: 1 });
 
 export default mongoose.model<ICart>('Cart', cartSchema);
