@@ -501,6 +501,41 @@ export const getDashboardStats = async (_req: Request, res: Response, next: Next
       Order.countDocuments(),
     ]);
 
+    // 30-day comparison metrics
+    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const prev30Days = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+
+    const [current30, prev30, current30Orders, prev30Orders, current30Users, prev30Users, returnedOrders, totalDelivered] = await Promise.all([
+      // Revenue last 30 days
+      Order.aggregate([
+        { $match: { createdAt: { $gte: last30Days }, paymentStatus: 'Paid' } },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+      ]),
+      // Revenue previous 30 days
+      Order.aggregate([
+        { $match: { createdAt: { $gte: prev30Days, $lt: last30Days }, paymentStatus: 'Paid' } },
+        { $group: { _id: null, total: { $sum: '$totalAmount' } } },
+      ]),
+      // Orders last 30 days
+      Order.countDocuments({ createdAt: { $gte: last30Days } }),
+      // Orders previous 30 days
+      Order.countDocuments({ createdAt: { $gte: prev30Days, $lt: last30Days } }),
+      // Users last 30 days
+      User.countDocuments({ createdAt: { $gte: last30Days }, isDeleted: false }),
+      // Users previous 30 days
+      User.countDocuments({ createdAt: { $gte: prev30Days, $lt: last30Days }, isDeleted: false }),
+      // Return rate
+      Order.countDocuments({ orderStatus: { $in: ['Returned', 'Return Requested'] } }),
+      Order.countDocuments({ orderStatus: 'Delivered' }),
+    ]);
+
+    const current30Revenue = current30[0]?.total || 0;
+    const prev30Revenue = prev30[0]?.total || 0;
+    const revenueChange = prev30Revenue > 0 ? ((current30Revenue - prev30Revenue) / prev30Revenue) * 100 : 0;
+    const ordersChange = prev30Orders > 0 ? ((current30Orders - prev30Orders) / prev30Orders) * 100 : 0;
+    const usersChange = prev30Users > 0 ? ((current30Users - prev30Users) / prev30Users) * 100 : 0;
+    const returnRate = (totalDelivered + returnedOrders) > 0 ? (returnedOrders / (totalDelivered + returnedOrders)) * 100 : 0;
+
     res.status(200).json({
       success: true,
       data: {
@@ -509,6 +544,12 @@ export const getDashboardStats = async (_req: Request, res: Response, next: Next
           weekly: weeklyRevenue[0]?.total || 0,
           monthly: monthlyRevenue[0]?.total || 0,
           yearly: yearlyRevenue[0]?.total || 0,
+        },
+        comparison: {
+          revenue: { current: current30Revenue, change: Math.round(revenueChange * 10) / 10 },
+          orders: { current: current30Orders, change: Math.round(ordersChange * 10) / 10 },
+          users: { current: current30Users, change: Math.round(usersChange * 10) / 10 },
+          returnRate: Math.round(returnRate * 100) / 100,
         },
         ordersByStatus,
         topProducts,
