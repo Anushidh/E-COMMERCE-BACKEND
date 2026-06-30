@@ -398,9 +398,9 @@ export const googleCallback = async (req: Request, res: Response, next: NextFunc
 
     setRefreshTokenCookie(res, refreshToken);
 
-    // Redirect to frontend with access token only
+    // Redirect to frontend with tokens
     res.redirect(
-      `${env.CLIENT_URL}/auth/callback?accessToken=${accessToken}`
+      `${env.CLIENT_URL}/auth/callback?accessToken=${accessToken}&refreshToken=${refreshToken}`
     );
   } catch (error) {
     next(error);
