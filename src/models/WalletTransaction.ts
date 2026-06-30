@@ -24,5 +24,6 @@ const walletTransactionSchema = new Schema<IWalletTransaction>(
 
 walletTransactionSchema.index({ user: 1, createdAt: -1 });
 walletTransactionSchema.index({ wallet: 1 });
+walletTransactionSchema.index({ reference: 1 }, { unique: true, sparse: true });
 
 export default mongoose.model<IWalletTransaction>('WalletTransaction', walletTransactionSchema);

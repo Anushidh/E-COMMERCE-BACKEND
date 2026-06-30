@@ -11,6 +11,7 @@ import {
   getAllOrders,
   updateOrderStatus,
   handleReturn,
+  handleCancellation,
   getDashboardStats,
   getLowStockProducts,
   getAbandonedCarts,
@@ -41,6 +42,7 @@ router.patch('/users/:id/unblock', unblockUser);
 router.get('/orders', getAllOrders);
 router.patch('/orders/:id/status', updateOrderStatus);
 router.patch('/orders/:id/return', handleReturn);
+router.patch('/orders/:id/cancel', handleCancellation);
 
 // Inventory
 router.get('/inventory/low-stock', getLowStockProducts);

@@ -255,7 +255,10 @@ export const placeOrder = async (req: Request, res: Response, next: NextFunction
       }
     }
 
-    // 3. Atomic wallet deduction
+    // 3. Generate order ID (needed for wallet transaction reference)
+    const orderId = generateOrderId();
+
+    // 4. Atomic wallet deduction
     if (walletAmountUsed > 0) {
       const walletUpdate = await Wallet.findOneAndUpdate(
         { user: userId, balance: { $gte: walletAmountUsed } },
@@ -272,11 +275,11 @@ export const placeOrder = async (req: Request, res: Response, next: NextFunction
         type: 'debit',
         amount: walletAmountUsed,
         description: 'Used for order payment',
+        reference: orderId,
       }], { session });
     }
 
-    // 4. Create order
-    const orderId = generateOrderId();
+    // 5. Create order
     const [order] = await Order.create([{
       orderId,
       user: userId,
@@ -610,10 +613,23 @@ export const cancelOrder = async (req: Request, res: Response, next: NextFunctio
     const order = await Order.findOne({ _id: req.params.id, user: req.user!.userId }).session(session);
 
     if (!order) throw new AppError('Order not found', 404);
-    if (!['Placed', 'Confirmed'].includes(order.orderStatus)) {
+    if (!['Placed', 'Confirmed', 'Shipped'].includes(order.orderStatus)) {
       throw new AppError('Order cannot be cancelled at this stage', 400);
     }
 
+    // If order is Confirmed or Shipped, submit a cancellation request for admin approval
+    if (['Confirmed', 'Shipped'].includes(order.orderStatus)) {
+      order.orderStatus = 'Cancel Requested';
+      order.cancelReason = reason;
+      order.statusHistory.push({ status: 'Cancel Requested', timestamp: new Date(), note: reason });
+      await order.save({ session });
+      await session.commitTransaction();
+
+      res.status(200).json({ success: true, message: 'Cancellation request submitted. Awaiting admin approval.' });
+      return;
+    }
+
+    // Instant cancellation for Placed orders
     order.orderStatus = 'Cancelled';
     order.cancelReason = reason;
     order.statusHistory.push({ status: 'Cancelled', timestamp: new Date(), note: reason });

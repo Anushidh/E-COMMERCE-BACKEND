@@ -4,6 +4,7 @@ import {
   getWishlist,
   addToWishlist,
   removeFromWishlist,
+  clearWishlist,
   moveToCart,
 } from '../controllers/wishlist.controller';
 
@@ -13,6 +14,7 @@ router.use(authenticate);
 
 router.get('/', getWishlist);
 router.post('/', addToWishlist);
+router.delete('/', clearWishlist);
 router.delete('/:productId', removeFromWishlist);
 router.post('/move-to-cart', moveToCart);
 

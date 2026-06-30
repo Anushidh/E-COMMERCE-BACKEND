@@ -1,9 +1,12 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import Wishlist from '../models/Wishlist';
 import Cart from '../models/Cart';
 import Variant from '../models/Variant';
 import Product from '../models/Product';
-import { safeMultiply, safeSum } from '../utils/helpers';
+import ProductOffer from '../models/ProductOffer';
+import CategoryOffer from '../models/CategoryOffer';
+import { safeMultiply, safeSum, calculateDiscount, safeSubtract } from '../utils/helpers';
 import { AppError } from '../utils/AppError';
 import { z } from 'zod';
 
@@ -26,7 +29,7 @@ export const getWishlist = async (req: Request, res: Response, next: NextFunctio
       .populate({
         path: 'products',
         match: { isDeleted: false },
-        select: 'name images basePrice status averageRating',
+        select: 'name images basePrice status averageRating category',
       });
 
     if (!wishlist) {
@@ -35,22 +38,85 @@ export const getWishlist = async (req: Request, res: Response, next: NextFunctio
       return;
     }
 
-    // Enrich each product with stock availability from variants
-    const productsWithStock = await Promise.all(
-      wishlist.products
-        .filter((p) => p !== null)
-        .map(async (product: any) => {
-          const totalStock = await Variant.aggregate([
-            { $match: { product: product._id, isDeleted: false } },
-            { $group: { _id: null, total: { $sum: '$stock' } } },
-          ]);
-          return {
-            ...product.toObject(),
-            inStock: (totalStock[0]?.total || 0) > 0,
-            totalStock: totalStock[0]?.total || 0,
-          };
-        })
-    );
+    // Enrich products with stock availability using a single aggregation query
+    const productIds = wishlist.products
+      .filter((p) => p !== null)
+      .map((p: any) => p._id);
+
+    const categoryIds = wishlist.products
+      .filter((p) => p !== null)
+      .map((p: any) => p.category)
+      .filter(Boolean);
+
+    const now = new Date();
+
+    const [stockData, productOffers, categoryOffers] = await Promise.all([
+      Variant.aggregate([
+        { $match: { product: { $in: productIds }, isDeleted: false } },
+        { $group: { _id: '$product', total: { $sum: '$stock' } } },
+      ]),
+      ProductOffer.find({
+        product: { $in: productIds },
+        isActive: true,
+        isDeleted: false,
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+      }),
+      CategoryOffer.find({
+        category: { $in: categoryIds },
+        isActive: true,
+        isDeleted: false,
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+      }),
+    ]);
+
+    const stockMap = new Map(stockData.map((s) => [s._id.toString(), s.total]));
+
+    // Build best offer maps
+    const productOfferMap = new Map<string, typeof productOffers[0]>();
+    for (const offer of productOffers) {
+      const key = offer.product.toString();
+      const existing = productOfferMap.get(key);
+      if (!existing || offer.discountValue > existing.discountValue) {
+        productOfferMap.set(key, offer);
+      }
+    }
+
+    const categoryOfferMap = new Map<string, typeof categoryOffers[0]>();
+    for (const offer of categoryOffers) {
+      const key = offer.category.toString();
+      const existing = categoryOfferMap.get(key);
+      if (!existing || offer.discountValue > existing.discountValue) {
+        categoryOfferMap.set(key, offer);
+      }
+    }
+
+    const productsWithStock = wishlist.products
+      .filter((p) => p !== null)
+      .map((product: any) => {
+        const totalStock = stockMap.get(product._id.toString()) || 0;
+
+        // Calculate best offer
+        let bestDiscount = 0;
+        const prodOffer = productOfferMap.get(product._id.toString());
+        if (prodOffer) {
+          bestDiscount = calculateDiscount(product.basePrice, prodOffer.discountType, prodOffer.discountValue);
+        }
+        const catId = product.category?.toString();
+        const catOffer = catId ? categoryOfferMap.get(catId) : undefined;
+        if (catOffer) {
+          const catDiscount = calculateDiscount(product.basePrice, catOffer.discountType, catOffer.discountValue);
+          if (catDiscount > bestDiscount) bestDiscount = catDiscount;
+        }
+
+        return {
+          ...product.toObject(),
+          inStock: totalStock > 0,
+          totalStock,
+          discountedPrice: bestDiscount > 0 ? safeSubtract(product.basePrice, Math.min(bestDiscount, product.basePrice)) : null,
+        };
+      });
 
     res.status(200).json({ success: true, data: { ...wishlist.toObject(), products: productsWithStock } });
   } catch (error) {
@@ -101,11 +167,28 @@ export const removeFromWishlist = async (req: Request, res: Response, next: Next
   }
 };
 
+/** Clears all products from the user's wishlist. */
+export const clearWishlist = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const wishlist = await Wishlist.findOne({ user: req.user!.userId });
+    if (!wishlist) throw new AppError('Wishlist not found', 404);
+
+    wishlist.products = [];
+    await wishlist.save();
+
+    res.status(200).json({ success: true, message: 'Wishlist cleared' });
+  } catch (error) {
+    next(error);
+  }
+};
+
 /**
  * Moves a product from the wishlist to the cart.
- * Validates input, checks stock, and removes from wishlist on success.
+ * Uses a MongoDB transaction to ensure both cart addition and wishlist removal
+ * succeed or fail together — preventing the item from existing in both places.
  */
 export const moveToCart = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  const session = await mongoose.startSession();
   try {
     const { productId, variantId } = moveToCartSchema.parse(req.body);
 
@@ -118,32 +201,36 @@ export const moveToCart = async (req: Request, res: Response, next: NextFunction
 
     const price = variant.price || product.basePrice;
 
-    let cart = await Cart.findOne({ user: req.user!.userId });
-    if (!cart) {
-      cart = new Cart({ user: req.user!.userId, items: [], totalAmount: 0 });
-    }
+    await session.withTransaction(async () => {
+      let cart = await Cart.findOne({ user: req.user!.userId }).session(session);
+      if (!cart) {
+        cart = new Cart({ user: req.user!.userId, items: [], totalAmount: 0 });
+      }
 
-    const existingItem = cart.items.find(
-      (item) => item.product.toString() === productId && item.variant.toString() === variantId
-    );
+      const existingItem = cart.items.find(
+        (item) => item.product.toString() === productId && item.variant.toString() === variantId
+      );
 
-    if (existingItem) {
-      existingItem.quantity += 1;
-    } else {
-      cart.items.push({ product: productId as any, variant: variantId as any, quantity: 1, price });
-    }
+      if (existingItem) {
+        existingItem.quantity += 1;
+      } else {
+        cart.items.push({ product: productId as any, variant: variantId as any, quantity: 1, price });
+      }
 
-    cart.totalAmount = safeSum(cart.items.map((item) => safeMultiply(item.price, item.quantity)));
-    await cart.save();
+      cart.totalAmount = safeSum(cart.items.map((item) => safeMultiply(item.price, item.quantity)));
+      await cart.save({ session });
 
-    // Remove from wishlist
-    await Wishlist.findOneAndUpdate(
-      { user: req.user!.userId },
-      { $pull: { products: productId } }
-    );
+      await Wishlist.findOneAndUpdate(
+        { user: req.user!.userId },
+        { $pull: { products: productId } },
+        { session }
+      );
+    });
 
     res.status(200).json({ success: true, message: 'Moved to cart' });
   } catch (error) {
     next(error);
+  } finally {
+    await session.endSession();
   }
 };

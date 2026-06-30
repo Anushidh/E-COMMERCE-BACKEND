@@ -2,9 +2,10 @@ import { Request, Response, NextFunction } from 'express';
 import Cart from '../models/Cart';
 import Variant from '../models/Variant';
 import Product from '../models/Product';
-
+import ProductOffer from '../models/ProductOffer';
+import CategoryOffer from '../models/CategoryOffer';
 import { AppError } from '../utils/AppError';
-import { safeMultiply, safeSum } from '../utils/helpers';
+import { safeMultiply, safeSum, calculateDiscount, safeSubtract } from '../utils/helpers';
 import { env } from '../config/env';
 import { z } from 'zod';
 
@@ -31,7 +32,7 @@ const recalculateTotal = (items: any[]): number => {
 export const getCart = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     let cart = await Cart.findOne({ user: req.user!.userId })
-      .populate('items.product', 'name images status isDeleted basePrice')
+      .populate('items.product', 'name images status isDeleted basePrice category')
       .populate('items.variant', 'size color stock price isDeleted');
 
     if (!cart) {
@@ -64,7 +65,71 @@ export const getCart = async (req: Request, res: Response, next: NextFunction): 
       await cart.save();
     }
 
-    res.status(200).json({ success: true, data: cart });
+    // Compute offer discounts for display (doesn't modify stored prices)
+    const now = new Date();
+    const productIds = validItems.map((item) => (item.product as any)._id);
+    const categoryIds = validItems.map((item) => (item.product as any).category).filter(Boolean);
+
+    const [productOffers, categoryOffers] = await Promise.all([
+      ProductOffer.find({
+        product: { $in: productIds },
+        isActive: true,
+        isDeleted: false,
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+      }),
+      categoryIds.length > 0
+        ? CategoryOffer.find({
+            category: { $in: categoryIds },
+            isActive: true,
+            isDeleted: false,
+            startDate: { $lte: now },
+            endDate: { $gte: now },
+          })
+        : [],
+    ]);
+
+    const productOfferMap = new Map<string, typeof productOffers[0]>();
+    for (const offer of productOffers) {
+      const key = offer.product.toString();
+      const existing = productOfferMap.get(key);
+      if (!existing || offer.discountValue > existing.discountValue) {
+        productOfferMap.set(key, offer);
+      }
+    }
+
+    const categoryOfferMap = new Map<string, (typeof categoryOffers)[number]>();
+    for (const offer of categoryOffers) {
+      const key = offer.category.toString();
+      const existing = categoryOfferMap.get(key);
+      if (!existing || offer.discountValue > existing.discountValue) {
+        categoryOfferMap.set(key, offer);
+      }
+    }
+
+    const cartObj = cart.toObject();
+    const itemsWithOffers = cartObj.items.map((item: any) => {
+      const productId = item.product._id.toString();
+      const catId = item.product.category?.toString();
+
+      let bestDiscount = 0;
+      const prodOffer = productOfferMap.get(productId);
+      if (prodOffer) {
+        bestDiscount = calculateDiscount(item.price, prodOffer.discountType, prodOffer.discountValue);
+      }
+      const catOffer = catId ? categoryOfferMap.get(catId) : undefined;
+      if (catOffer) {
+        const catDiscount = calculateDiscount(item.price, catOffer.discountType, catOffer.discountValue);
+        if (catDiscount > bestDiscount) bestDiscount = catDiscount;
+      }
+
+      return {
+        ...item,
+        discountedPrice: bestDiscount > 0 ? safeSubtract(item.price, Math.min(bestDiscount, item.price)) : null,
+      };
+    });
+
+    res.status(200).json({ success: true, data: { ...cartObj, items: itemsWithOffers } });
   } catch (error) {
     next(error);
   }
@@ -112,6 +177,9 @@ export const addToCart = async (req: Request, res: Response, next: NextFunction)
       existingItem.quantity = newQty;
       existingItem.price = price;
     } else {
+      if (cart.items.length >= env.MAX_CART_ITEMS) {
+        throw new AppError(`Maximum ${env.MAX_CART_ITEMS} different items allowed in cart`, 400);
+      }
       cart.items.push({
         product: data.product as any,
         variant: data.variant as any,
@@ -152,6 +220,8 @@ export const updateCartItem = async (req: Request, res: Response, next: NextFunc
       throw new AppError(`Only ${variant.stock} items available in stock`, 400);
     }
 
+    const product = await Product.findById(item.product);
+    item.price = variant.price || product?.basePrice || item.price;
     item.quantity = quantity;
     cart.totalAmount = recalculateTotal(cart.items);
     cart.lastActivityAt = new Date();

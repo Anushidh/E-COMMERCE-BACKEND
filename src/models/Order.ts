@@ -48,7 +48,7 @@ export interface IOrder extends Document {
   totalAmount: number;
   paymentMethod: 'razorpay' | 'cod' | 'wallet';
   paymentStatus: 'Pending' | 'Paid' | 'Failed' | 'Refunded';
-  orderStatus: 'Placed' | 'Confirmed' | 'Shipped' | 'Out for Delivery' | 'Delivered' | 'Cancelled' | 'Return Requested' | 'Returned';
+  orderStatus: 'Placed' | 'Confirmed' | 'Shipped' | 'Out for Delivery' | 'Delivered' | 'Cancelled' | 'Cancel Requested' | 'Return Requested' | 'Returned';
   statusHistory: IStatusHistory[];
   razorpayOrderId?: string;
   razorpayPaymentId?: string;
@@ -107,7 +107,7 @@ const orderSchema = new Schema<IOrder>(
     paymentStatus: { type: String, enum: ['Pending', 'Paid', 'Failed', 'Refunded'], default: 'Pending' },
     orderStatus: {
       type: String,
-      enum: ['Placed', 'Confirmed', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled', 'Return Requested', 'Returned'],
+      enum: ['Placed', 'Confirmed', 'Shipped', 'Out for Delivery', 'Delivered', 'Cancelled', 'Cancel Requested', 'Return Requested', 'Returned'],
       default: 'Placed',
     },
     razorpayOrderId: { type: String },

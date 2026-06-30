@@ -3,6 +3,7 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import Wallet from '../models/Wallet';
 import WalletTransaction from '../models/WalletTransaction';
+import WalletTopup from '../models/WalletTopup';
 import { AppError } from '../utils/AppError';
 import { env } from '../config/env';
 import { z } from 'zod';
@@ -57,7 +58,7 @@ export const getWalletTransactions = async (req: Request, res: Response, next: N
   }
 };
 
-/** Creates a Razorpay order for wallet top-up. */
+/** Creates a Razorpay order for wallet top-up and stores a pending record. */
 export const addMoney = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { amount } = addMoneySchema.parse(req.body);
@@ -66,6 +67,13 @@ export const addMoney = async (req: Request, res: Response, next: NextFunction):
       amount: amount * 100, // paise
       currency: 'INR',
       receipt: `wlt_${Date.now()}`,
+    });
+
+    // Store pending topup with server-side amount
+    await WalletTopup.create({
+      user: req.user!.userId,
+      razorpayOrderId: razorpayOrder.id,
+      amount,
     });
 
     res.status(200).json({
@@ -84,12 +92,12 @@ export const addMoney = async (req: Request, res: Response, next: NextFunction):
   }
 };
 
-/** Verifies Razorpay payment and credits wallet. */
+/** Verifies Razorpay payment and credits wallet using server-side pending record. */
 export const verifyTopup = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, amount } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !amount) {
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
       throw new AppError('Missing payment details', 400);
     }
 
@@ -104,10 +112,35 @@ export const verifyTopup = async (req: Request, res: Response, next: NextFunctio
       throw new AppError('Payment verification failed', 400);
     }
 
+    // Idempotency check — prevent double-crediting for the same payment
+    const existing = await WalletTransaction.findOne({ reference: razorpay_payment_id });
+    if (existing) {
+      const wallet = await Wallet.findOne({ user: req.user!.userId });
+      res.status(200).json({
+        success: true,
+        message: 'Payment already processed',
+        data: { balance: wallet?.balance || 0 },
+      });
+      return;
+    }
+
+    // Fetch the pending topup to get the server-side trusted amount
+    const pendingTopup = await WalletTopup.findOne({
+      razorpayOrderId: razorpay_order_id,
+      user: req.user!.userId,
+      status: 'pending',
+    });
+
+    if (!pendingTopup) {
+      throw new AppError('No pending top-up found for this order', 400);
+    }
+
+    const amount = pendingTopup.amount;
+
     // Credit wallet
     const wallet = await Wallet.findOneAndUpdate(
       { user: req.user!.userId },
-      { $inc: { balance: Number(amount) } },
+      { $inc: { balance: amount } },
       { new: true, upsert: true }
     );
 
@@ -116,10 +149,14 @@ export const verifyTopup = async (req: Request, res: Response, next: NextFunctio
       wallet: wallet._id,
       user: req.user!.userId,
       type: 'credit',
-      amount: Number(amount),
+      amount,
       description: 'Wallet top-up via Razorpay',
       reference: razorpay_payment_id,
     });
+
+    // Mark topup as completed
+    pendingTopup.status = 'completed';
+    await pendingTopup.save();
 
     res.status(200).json({
       success: true,

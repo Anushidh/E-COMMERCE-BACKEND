@@ -23,6 +23,10 @@ const handleReturnSchema = z.object({
   action: z.enum(['approve', 'reject']),
 });
 
+const handleCancellationSchema = z.object({
+  action: z.enum(['approve', 'reject']),
+});
+
 // ─── Admin Auth ──────────────────────────────────────────────────────────────
 
 /**
@@ -248,6 +252,7 @@ export const updateOrderStatus = async (req: Request, res: Response, next: NextF
       'Out for Delivery': ['Delivered'],
       'Delivered': [],
       'Cancelled': [],
+      'Cancel Requested': ['Cancelled'],
       'Return Requested': ['Returned'],
       'Returned': [],
     };
@@ -393,6 +398,106 @@ export const handleReturn = async (req: Request, res: Response, next: NextFuncti
 };
 
 // ─── Dashboard Analytics ─────────────────────────────────────────────────────
+
+/**
+ * Handles a cancellation request: approve (refund to wallet + restore stock + restore coupon)
+ * or reject (revert to previous status). Uses a transaction for data consistency.
+ */
+export const handleCancellation = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { action } = handleCancellationSchema.parse(req.body);
+    const order = await Order.findById(req.params.id).session(session);
+    if (!order) throw new AppError('Order not found', 404);
+
+    if (order.orderStatus !== 'Cancel Requested') {
+      throw new AppError('No cancellation request for this order', 400);
+    }
+
+    if (action === 'approve') {
+      order.orderStatus = 'Cancelled';
+      order.statusHistory.push({ status: 'Cancelled', timestamp: new Date(), note: 'Cancellation approved by admin' });
+
+      // Restore stock and decrement totalSold
+      for (const item of order.items) {
+        await Variant.findByIdAndUpdate(item.variant, { $inc: { stock: item.quantity } }, { session });
+        await Product.findByIdAndUpdate(item.product, { $inc: { totalSold: -item.quantity } }, { session });
+      }
+
+      // Restore coupon usage
+      if (order.couponCode) {
+        await Coupon.findOneAndUpdate(
+          { code: order.couponCode, isDeleted: false },
+          { $inc: { totalUsed: -1 } },
+          { session }
+        );
+        await Coupon.findOneAndUpdate(
+          { code: order.couponCode, 'usedBy.user': order.user },
+          { $inc: { 'usedBy.$.count': -1 } },
+          { session }
+        );
+      }
+
+      // Refund to wallet
+      let refundAmount = 0;
+      if (order.paymentStatus === 'Paid' || order.walletAmountUsed > 0) {
+        refundAmount = order.paymentStatus === 'Paid'
+          ? safeAdd(order.totalAmount, order.walletAmountUsed)
+          : order.walletAmountUsed;
+
+        if (refundAmount > 0) {
+          const wallet = await Wallet.findOneAndUpdate(
+            { user: order.user },
+            { $inc: { balance: refundAmount } },
+            { new: true, upsert: true, session }
+          );
+
+          await WalletTransaction.create([{
+            wallet: wallet._id,
+            user: order.user,
+            type: 'credit',
+            amount: refundAmount,
+            description: `Refund for cancelled order ${order.orderId}`,
+            reference: order.orderId,
+          }], { session });
+
+          order.paymentStatus = 'Refunded';
+        }
+      }
+
+      await order.save({ session });
+      await session.commitTransaction();
+
+      // Email outside transaction
+      const user = await User.findById(order.user);
+      if (user && refundAmount > 0) {
+        await sendRefundEmail(user.email, order.orderId, refundAmount);
+      }
+    } else {
+      // Reject — find the status before Cancel Requested and revert
+      const history = order.statusHistory;
+      const previousStatus = history.length >= 2
+        ? history[history.length - 2].status
+        : 'Confirmed';
+
+      order.orderStatus = previousStatus as any;
+      order.statusHistory.push({ status: previousStatus, timestamp: new Date(), note: 'Cancellation rejected by admin' });
+      await order.save({ session });
+      await session.commitTransaction();
+    }
+
+    res.status(200).json({ success: true, message: `Cancellation ${action}d` });
+  } catch (error) {
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
+    next(error);
+  } finally {
+    session.endSession();
+  }
+};
 
 /**
  * Returns comprehensive admin dashboard data including revenue, top products,

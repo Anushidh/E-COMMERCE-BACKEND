@@ -256,10 +256,74 @@ export const getProducts = async (req: Request, res: Response, next: NextFunctio
       Product.countDocuments(query),
     ]);
 
+    // Batch-fetch active offers for all listed products
+    const now = new Date();
+    const productIds = products.map((p) => p._id);
+    const categoryIds = products.map((p) => p.category && typeof p.category === 'object' ? (p.category as any)._id : p.category).filter(Boolean);
+
+    const [productOffers, categoryOffers] = await Promise.all([
+      ProductOffer.find({
+        product: { $in: productIds },
+        isActive: true,
+        isDeleted: false,
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+      }),
+      CategoryOffer.find({
+        category: { $in: categoryIds },
+        isActive: true,
+        isDeleted: false,
+        startDate: { $lte: now },
+        endDate: { $gte: now },
+      }),
+    ]);
+
+    // Build lookup maps for best offer per product/category
+    const productOfferMap = new Map<string, typeof productOffers[0]>();
+    for (const offer of productOffers) {
+      const key = offer.product.toString();
+      const existing = productOfferMap.get(key);
+      if (!existing || offer.discountValue > existing.discountValue) {
+        productOfferMap.set(key, offer);
+      }
+    }
+
+    const categoryOfferMap = new Map<string, typeof categoryOffers[0]>();
+    for (const offer of categoryOffers) {
+      const key = offer.category.toString();
+      const existing = categoryOfferMap.get(key);
+      if (!existing || offer.discountValue > existing.discountValue) {
+        categoryOfferMap.set(key, offer);
+      }
+    }
+
+    // Enrich products with discounted price
+    const enrichedProducts = products.map((product) => {
+      const p = product.toObject() as any;
+      const catId = p.category && typeof p.category === 'object' ? p.category._id?.toString() : p.category?.toString();
+
+      let bestDiscount = 0;
+      const prodOffer = productOfferMap.get(p._id.toString());
+      if (prodOffer) {
+        bestDiscount = calculateDiscount(p.basePrice, prodOffer.discountType, prodOffer.discountValue);
+      }
+
+      const catOffer = catId ? categoryOfferMap.get(catId) : undefined;
+      if (catOffer) {
+        const catDiscount = calculateDiscount(p.basePrice, catOffer.discountType, catOffer.discountValue);
+        if (catDiscount > bestDiscount) bestDiscount = catDiscount;
+      }
+
+      return {
+        ...p,
+        discountedPrice: bestDiscount > 0 ? safeSubtract(p.basePrice, Math.min(bestDiscount, p.basePrice)) : null,
+      };
+    });
+
     res.status(200).json({
       success: true,
       data: {
-        products,
+        products: enrichedProducts,
         pagination: {
           total,
           page,

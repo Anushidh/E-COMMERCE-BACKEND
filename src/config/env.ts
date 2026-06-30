@@ -74,4 +74,5 @@ export const env = {
 
   // Cart limits
   MAX_QUANTITY_PER_ITEM: parseInt(process.env.MAX_QUANTITY_PER_ITEM || '10', 10),
+  MAX_CART_ITEMS: parseInt(process.env.MAX_CART_ITEMS || '20', 10),
 };
