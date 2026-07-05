@@ -13,6 +13,7 @@ import WalletTransaction from '../models/WalletTransaction';
 import Payment from '../models/Payment';
 import ProductOffer from '../models/ProductOffer';
 import CategoryOffer from '../models/CategoryOffer';
+import Invoice from '../models/Invoice';
 import User from '../models/User';
 import { AppError } from '../utils/AppError';
 import { generateOrderId, calculateDiscount, calculateCouponDiscount, safeMultiply, safeAdd, safeSubtract, calculateDeliveryCharge, calculateGST } from '../utils/helpers';
@@ -654,10 +655,14 @@ export const cancelOrder = async (req: Request, res: Response, next: NextFunctio
       );
     }
 
-    // Refund to wallet if payment was made
+    // Refund to wallet only for orders that were paid electronically
     let refundAmount = 0;
-    if (order.paymentStatus === 'Paid' || order.walletAmountUsed > 0) {
-      refundAmount = order.paymentStatus === 'Paid'
+    const wasPaidOnline = order.paymentStatus === 'Paid' && order.paymentMethod !== 'cod';
+    if (wasPaidOnline || order.walletAmountUsed > 0) {
+      // For online-paid orders: refund totalAmount (what was charged online) + any wallet used
+      // For wallet-only orders: refund walletAmountUsed
+      // For COD: no refund (cash not yet collected)
+      refundAmount = wasPaidOnline
         ? safeAdd(order.totalAmount, order.walletAmountUsed)
         : order.walletAmountUsed;
 
@@ -746,8 +751,6 @@ export const requestReturn = async (req: Request, res: Response, next: NextFunct
  */
 export const getOrderInvoice = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const { default: Invoice } = await import('../models/Invoice');
-
     const query: any = { _id: req.params.id };
     if (req.user!.role !== 'admin') {
       query.user = req.user!.userId;
@@ -765,7 +768,7 @@ export const getOrderInvoice = async (req: Request, res: Response, next: NextFun
 
     if (!invoice) {
       // Generate on-the-fly
-      const { invoiceId, pdfUrl } = await createInvoice(order);
+      const { invoiceId } = await createInvoice(order);
       invoice = await Invoice.findOne({ invoiceId });
     }
 

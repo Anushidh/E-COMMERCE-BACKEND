@@ -3,6 +3,7 @@ import Product from '../models/Product';
 import Variant from '../models/Variant';
 import ProductOffer from '../models/ProductOffer';
 import CategoryOffer from '../models/CategoryOffer';
+import RecentlyViewed from '../models/RecentlyViewed';
 import cloudinary from '../config/cloudinary';
 import { AppError } from '../utils/AppError';
 import {
@@ -134,7 +135,7 @@ export const getProductById = async (req: Request, res: Response, next: NextFunc
 
     const variants = await Variant.find({ product: product._id, isDeleted: false });
 
-    // Get applicable offers
+    // Get applicable offers — sort by discountValue descending to get the best one
     const now = new Date();
     const productOffer = await ProductOffer.findOne({
       product: product._id,
@@ -142,7 +143,7 @@ export const getProductById = async (req: Request, res: Response, next: NextFunc
       isDeleted: false,
       startDate: { $lte: now },
       endDate: { $gte: now },
-    });
+    }).sort({ discountValue: -1 });
 
     const categoryOffer = await CategoryOffer.findOne({
       category: product.category,
@@ -150,7 +151,7 @@ export const getProductById = async (req: Request, res: Response, next: NextFunc
       isDeleted: false,
       startDate: { $lte: now },
       endDate: { $gte: now },
-    });
+    }).sort({ discountValue: -1 });
 
     // Calculate best offer
     let bestDiscount = 0;
@@ -224,10 +225,12 @@ export const getProducts = async (req: Request, res: Response, next: NextFunctio
     if (filters.rating) query.averageRating = { $gte: parseFloat(filters.rating) };
 
     if (filters.search) {
+      // Escape special regex characters to prevent ReDoS / expensive queries
+      const escapedSearch = filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
-        { name: { $regex: filters.search, $options: 'i' } },
-        { brand: { $regex: filters.search, $options: 'i' } },
-        { description: { $regex: filters.search, $options: 'i' } },
+        { name: { $regex: escapedSearch, $options: 'i' } },
+        { brand: { $regex: escapedSearch, $options: 'i' } },
+        { description: { $regex: escapedSearch, $options: 'i' } },
       ];
     }
 
@@ -461,9 +464,6 @@ export const removeProductImage = async (req: Request, res: Response, next: Next
 export const adjustStock = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { variantId } = req.params;
-    const adjustStockSchema = z.object({
-      adjustment: z.number().int().min(-10000).max(10000).refine((v) => v !== 0, 'Adjustment must be non-zero'),
-    });
     const { adjustment } = adjustStockSchema.parse(req.body);
 
     const variant = await Variant.findOne({ _id: variantId, isDeleted: false });
@@ -501,9 +501,11 @@ export const adjustStock = async (req: Request, res: Response, next: NextFunctio
   }
 };
 
-import RecentlyViewed from '../models/RecentlyViewed';
-
 const MAX_RECENTLY_VIEWED = 20;
+
+const adjustStockSchema = z.object({
+  adjustment: z.number().int().min(-10000).max(10000).refine((v) => v !== 0, 'Adjustment must be non-zero'),
+});
 
 /**
  * Tracks a product view for the authenticated user.

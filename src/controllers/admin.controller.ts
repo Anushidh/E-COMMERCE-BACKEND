@@ -69,18 +69,18 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
 
 /**
  * Logs out the admin by blacklisting their current access token in Redis.
- * The token remains blacklisted for its remaining lifetime (15 min).
+ * Checks both cookie and request body for the refresh token.
  */
 export const adminLogout = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
     if (authHeader) {
       const token = authHeader.split(' ')[1];
-      await blacklistToken(token, 15 * 60);
+      await blacklistToken(token); // TTL derived from token's exp claim
     }
 
-    // Invalidate refresh token from cookie
-    const refreshToken = req.cookies?.refreshToken;
+    // Invalidate refresh token — check cookie first, fall back to body
+    const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
     if (refreshToken) {
       await invalidateRefreshToken(refreshToken);
     }
@@ -108,9 +108,11 @@ export const getAllUsers = async (req: Request, res: Response, next: NextFunctio
 
     const query: any = { isDeleted: false };
     if (search) {
+      // Escape special regex characters to prevent ReDoS / expensive queries
+      const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
+        { name: { $regex: escapedSearch, $options: 'i' } },
+        { email: { $regex: escapedSearch, $options: 'i' } },
       ];
     }
 
@@ -273,36 +275,49 @@ export const updateOrderStatus = async (req: Request, res: Response, next: NextF
         order.paymentStatus = 'Paid';
       }
 
-      // Atomically process referral reward (prevents double-reward race)
+      await order.save();
+
+      // Atomically process referral reward inside a transaction
       const user = await User.findById(order.user);
       if (user?.referredBy) {
-        const referral = await Referral.findOneAndUpdate(
-          { referee: user._id, status: 'Pending' },
-          { status: 'Rewarded' },
-          { new: true }
-        );
-
-        if (referral) {
-          // Credit the referrer's wallet atomically
-          const referrerWallet = await Wallet.findOneAndUpdate(
-            { user: referral.referrer },
-            { $inc: { balance: referral.rewardAmount } },
-            { new: true, upsert: true }
+        const refSession = await mongoose.startSession();
+        refSession.startTransaction();
+        try {
+          const referral = await Referral.findOneAndUpdate(
+            { referee: user._id, status: 'Pending' },
+            { status: 'Rewarded' },
+            { new: true, session: refSession }
           );
 
-          await WalletTransaction.create({
-            wallet: referrerWallet._id,
-            user: referral.referrer,
-            type: 'credit',
-            amount: referral.rewardAmount,
-            description: `Referral reward for ${user.name}`,
-            reference: `REF-${user._id}`,
-          });
+          if (referral) {
+            const referrerWallet = await Wallet.findOneAndUpdate(
+              { user: referral.referrer },
+              { $inc: { balance: referral.rewardAmount } },
+              { new: true, upsert: true, session: refSession }
+            );
+
+            await WalletTransaction.create([{
+              wallet: referrerWallet._id,
+              user: referral.referrer,
+              type: 'credit',
+              amount: referral.rewardAmount,
+              description: `Referral reward for ${user.name}`,
+              reference: `REF-${user._id}`,
+            }], { session: refSession });
+          }
+
+          await refSession.commitTransaction();
+        } catch (refErr) {
+          await refSession.abortTransaction();
+          // Non-fatal — log but don't fail the order update
+          console.error(`[Referral] Failed to process referral reward for order ${order.orderId}:`, refErr);
+        } finally {
+          refSession.endSession();
         }
       }
+    } else {
+      await order.save();
     }
-
-    await order.save();
 
     // Notify user via email
     const orderUser = await User.findById(order.user);
@@ -440,10 +455,14 @@ export const handleCancellation = async (req: Request, res: Response, next: Next
         );
       }
 
-      // Refund to wallet
+      // Refund to wallet only for orders that were paid electronically
       let refundAmount = 0;
-      if (order.paymentStatus === 'Paid' || order.walletAmountUsed > 0) {
-        refundAmount = order.paymentStatus === 'Paid'
+      const wasPaidOnline = order.paymentStatus === 'Paid' && order.paymentMethod !== 'cod';
+      if (wasPaidOnline || order.walletAmountUsed > 0) {
+        // For online-paid orders: refund totalAmount + any wallet used
+        // For wallet-only or partial wallet: refund walletAmountUsed
+        // For COD: no refund (cash not yet collected)
+        refundAmount = wasPaidOnline
           ? safeAdd(order.totalAmount, order.walletAmountUsed)
           : order.walletAmountUsed;
 

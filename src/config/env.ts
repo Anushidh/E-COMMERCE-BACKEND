@@ -1,10 +1,29 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+const isProd = process.env.NODE_ENV === 'production';
+
+/**
+ * Asserts that a required environment variable is set in production.
+ * In development, falls back to the provided default.
+ * Throws at startup if a required secret is missing in production — fail fast.
+ */
+function requireEnv(key: string, defaultValue: string): string {
+  const value = process.env[key];
+  if (!value) {
+    if (isProd) {
+      throw new Error(`[ENV] Missing required environment variable in production: ${key}`);
+    }
+    return defaultValue;
+  }
+  return value;
+}
+
 /**
  * Centralized environment configuration.
  * Loads all environment variables with sensible defaults for local development.
  * In production, these should be set via the hosting platform's env management.
+ * Critical secrets will throw on startup if missing in production.
  */
 export const env = {
   // Server
@@ -12,14 +31,14 @@ export const env = {
   NODE_ENV: process.env.NODE_ENV || 'development',
 
   // MongoDB
-  MONGODB_URI: process.env.MONGODB_URI || 'mongodb://localhost:27017/ecommerce',
+  MONGODB_URI: requireEnv('MONGODB_URI', 'mongodb://localhost:27017/ecommerce'),
 
   // Redis (used for OTP storage, token blacklisting, signup temp data)
-  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
+  REDIS_URL: requireEnv('REDIS_URL', 'redis://localhost:6379'),
 
-  // JWT tokens
-  JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || 'access_secret',
-  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || 'refresh_secret',
+  // JWT tokens — secrets are required in production (no insecure defaults)
+  JWT_ACCESS_SECRET: requireEnv('JWT_ACCESS_SECRET', 'dev_access_secret_change_in_production'),
+  JWT_REFRESH_SECRET: requireEnv('JWT_REFRESH_SECRET', 'dev_refresh_secret_change_in_production'),
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
 
@@ -40,10 +59,10 @@ export const env = {
   SMTP_PASS: process.env.SMTP_PASS || '',
   FROM_EMAIL: process.env.FROM_EMAIL || 'noreply@ecommerce.com',
 
-  // Razorpay (payment gateway)
-  RAZORPAY_KEY_ID: process.env.RAZORPAY_KEY_ID || '',
-  RAZORPAY_KEY_SECRET: process.env.RAZORPAY_KEY_SECRET || '',
-  RAZORPAY_WEBHOOK_SECRET: process.env.RAZORPAY_WEBHOOK_SECRET || '',
+  // Razorpay (payment gateway) — required in production
+  RAZORPAY_KEY_ID: requireEnv('RAZORPAY_KEY_ID', ''),
+  RAZORPAY_KEY_SECRET: requireEnv('RAZORPAY_KEY_SECRET', ''),
+  RAZORPAY_WEBHOOK_SECRET: requireEnv('RAZORPAY_WEBHOOK_SECRET', ''),
 
   // Frontend URL (used for CORS and OAuth redirects)
   CLIENT_URL: process.env.CLIENT_URL || 'http://localhost:3000',

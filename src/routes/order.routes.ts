@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate } from '../middlewares/auth';
+import { authenticate, userOnly } from '../middlewares/auth';
 import {
   placeOrder,
   verifyPayment,
@@ -17,7 +17,7 @@ const router = Router();
 // Razorpay webhook (no auth)
 router.post('/webhook/razorpay', razorpayWebhook as any);
 
-router.use(authenticate);
+router.use(authenticate, userOnly);
 
 router.post('/', placeOrder);
 router.post('/verify-payment', verifyPayment);

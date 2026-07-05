@@ -264,7 +264,7 @@ export const generateInvoicePDF = async (order: IOrder, invoiceId: string): Prom
 
     doc.fontSize(7).font('Helvetica').fillColor('#666666');
     doc.text('This is a computer-generated invoice and does not require a physical signature.', leftMargin, currentY);
-    doc.text('For returns and refund policy, please visit our website.', leftMargin, currentY + 10);
+    doc.text('For returns and refund policy, please visit wearhaus.com.', leftMargin, currentY + 10);
 
     doc.end();
   });

@@ -1,5 +1,4 @@
 import Cart from '../models/Cart';
-import User from '../models/User';
 import { sendEmail } from './email';
 
 const ABANDONMENT_THRESHOLD_HOURS = 24;
@@ -26,17 +25,17 @@ export const processAbandonedCarts = async (): Promise<{ flagged: number; emaile
     cart.isAbandoned = true;
     await cart.save();
 
-    // Send reminder email
-    const user = await User.findById(cart.user).select('name email isBlocked isDeleted');
-    if (user && !user.isBlocked && !user.isDeleted) {
+    // Use the already-populated user — no extra DB query needed
+    const user = cart.user as any;
+    if (user && user.email && !user.isBlocked && !user.isDeleted) {
       try {
         await sendEmail({
           to: user.email,
-          subject: 'You left items in your cart!',
+          subject: 'You left items in your Wearhaus cart!',
           html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
               <h2>Hey ${user.name}! 👋</h2>
-              <p>You have ${cart.items.length} item(s) waiting in your cart.</p>
+              <p>You have ${cart.items.length} item(s) waiting in your Wearhaus cart.</p>
               <p>Complete your purchase before they sell out!</p>
               <p style="margin-top: 20px;">
                 <a href="${process.env.CLIENT_URL || 'http://localhost:3000'}/cart"

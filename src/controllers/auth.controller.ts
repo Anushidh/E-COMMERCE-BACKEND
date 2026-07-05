@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import { redis } from '../config/redis';
 import User from '../models/User';
+import Admin from '../models/Admin';
 import OTPRecord from '../models/OTPRecord';
 import Wallet from '../models/Wallet';
 import Referral from '../models/Referral';
@@ -12,7 +14,6 @@ import {
   generateRefreshToken,
   verifyAndRotateRefreshToken,
   blacklistToken,
-  isTokenBlacklisted,
   invalidateRefreshToken,
   setRefreshTokenCookie,
   clearRefreshTokenCookie,
@@ -72,8 +73,7 @@ export const signup = async (req: Request, res: Response, next: NextFunction): P
 
 /**
  * Verifies the OTP sent during signup. On success:
- * - Creates the user account (verified)
- * - Creates a wallet for the user
+ * - Creates the user account (verified) and wallet atomically in a transaction
  * - Records referral if a referral code was provided
  * - Returns JWT access + refresh tokens
  */
@@ -91,20 +91,32 @@ export const verifySignupOTP = async (req: Request, res: Response, next: NextFun
       throw new AppError('Invalid OTP', 400);
     }
 
-    // Create user
-    const user = await User.create({
-      name: parsed.name,
-      email: parsed.email,
-      password: parsed.password,
-      phone: parsed.phone,
-      isVerified: true,
-      referredBy: parsed.referralCode,
-    });
+    // Create user and wallet atomically — if wallet creation fails, user is rolled back
+    const session = await mongoose.startSession();
+    session.startTransaction();
 
-    // Create wallet for new user
-    await Wallet.create({ user: user._id });
+    let user: any;
+    try {
+      [user] = await User.create([{
+        name: parsed.name,
+        email: parsed.email,
+        password: parsed.password,
+        phone: parsed.phone,
+        isVerified: true,
+        referredBy: parsed.referralCode,
+      }], { session });
 
-    // Handle referral — create pending referral record
+      await Wallet.create([{ user: user._id }], { session });
+
+      await session.commitTransaction();
+    } catch (err) {
+      await session.abortTransaction();
+      throw err;
+    } finally {
+      session.endSession();
+    }
+
+    // Handle referral — create pending referral record (outside transaction, non-critical)
     if (parsed.referralCode) {
       const referrer = await User.findOne({ referralCode: parsed.referralCode, isDeleted: false });
       if (referrer) {
@@ -202,7 +214,6 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 
     // Verify account still exists and is active
     if (payload.role === 'admin') {
-      const { default: Admin } = await import('../models/Admin');
       const admin = await Admin.findById(payload.userId).select('isDeleted');
       if (!admin || admin.isDeleted) throw new AppError('Account not found', 401);
     } else {
@@ -226,17 +237,18 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 
 /**
  * Logs out the user by blacklisting the access token and invalidating the refresh token.
+ * Checks both cookie and request body for the refresh token to handle all client types.
  */
 export const logout = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
     if (authHeader) {
       const token = authHeader.split(' ')[1];
-      await blacklistToken(token, 15 * 60); // access token lifetime
+      await blacklistToken(token); // TTL derived from token's exp claim
     }
 
-    // Invalidate refresh token from cookie
-    const rToken = req.cookies?.refreshToken;
+    // Invalidate refresh token — check cookie first, fall back to body (mobile clients)
+    const rToken = req.cookies?.refreshToken || req.body?.refreshToken;
     if (rToken) {
       await invalidateRefreshToken(rToken);
     }
@@ -376,8 +388,10 @@ export const resendOTP = async (req: Request, res: Response, next: NextFunction)
 
 /**
  * Handles the Google OAuth callback after successful authentication.
- * Creates wallet if first time, generates JWT tokens, and redirects
- * to the frontend with tokens as query params.
+ * Creates wallet if first time, generates JWT tokens.
+ * Sets the refresh token as an HttpOnly cookie and redirects to the frontend
+ * with only the short-lived access token in the URL — the refresh token is
+ * never exposed in query params (browser history / referrer / logs).
  */
 export const googleCallback = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
@@ -396,12 +410,11 @@ export const googleCallback = async (req: Request, res: Response, next: NextFunc
     const accessToken = generateAccessToken({ userId: passportUser.userId, role: passportUser.role });
     const refreshToken = await generateRefreshToken({ userId: passportUser.userId, role: passportUser.role });
 
+    // Set refresh token as HttpOnly cookie only — never expose it in the URL
     setRefreshTokenCookie(res, refreshToken);
 
-    // Redirect to frontend with tokens
-    res.redirect(
-      `${env.CLIENT_URL}/auth/callback?accessToken=${accessToken}&refreshToken=${refreshToken}`
-    );
+    // Redirect to frontend with only the short-lived access token
+    res.redirect(`${env.CLIENT_URL}/auth/callback?accessToken=${accessToken}`);
   } catch (error) {
     next(error);
   }

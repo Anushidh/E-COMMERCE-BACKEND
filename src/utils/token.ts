@@ -66,9 +66,23 @@ export const verifyAndRotateRefreshToken = async (tokenId: string): Promise<{ pa
   return { payload, newRefreshToken: newTokenId };
 };
 
-/** Adds a token to the Redis blacklist so it's rejected on subsequent requests. */
-export const blacklistToken = async (token: string, expiresInSeconds: number): Promise<void> => {
-  await redis.setex(`blacklist:${token}`, expiresInSeconds, '1');
+/** Adds a token to the Redis blacklist so it's rejected on subsequent requests.
+ * TTL is derived from the token's own exp claim so it stays blacklisted exactly
+ * as long as the token would have been valid — no hardcoded lifetime needed.
+ */
+export const blacklistToken = async (token: string): Promise<void> => {
+  // Decode without verifying to read the exp claim (token may already be expired)
+  const decoded = jwt.decode(token) as { exp?: number } | null;
+  if (!decoded?.exp) {
+    // If we can't read exp, fall back to a safe 24h window
+    await redis.setex(`blacklist:${token}`, 24 * 60 * 60, '1');
+    return;
+  }
+  const remainingSeconds = decoded.exp - Math.floor(Date.now() / 1000);
+  if (remainingSeconds > 0) {
+    await redis.setex(`blacklist:${token}`, remainingSeconds, '1');
+  }
+  // If already expired, no need to blacklist — it won't be accepted anyway
 };
 
 /** Checks if a token has been blacklisted (e.g., after logout). */

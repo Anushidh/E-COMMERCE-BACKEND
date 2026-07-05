@@ -48,16 +48,26 @@ export const cache = (ttlSeconds: number) => {
 };
 
 /**
- * Invalidates cache entries matching a pattern.
+ * Invalidates cache entries matching a pattern using SCAN (non-blocking).
+ * KEYS is O(N) and blocks the Redis event loop — SCAN iterates incrementally.
  * Useful when data changes (e.g., product updated → clear product cache).
  *
  * Usage: await invalidateCache('cache:/api/products*')
  */
 export const invalidateCache = async (pattern: string): Promise<void> => {
   try {
-    const keys = await redis.keys(pattern);
-    if (keys.length > 0) {
-      await redis.del(...keys);
+    // Use SCAN to avoid blocking Redis with KEYS on large keyspaces
+    let cursor = '0';
+    const keysToDelete: string[] = [];
+
+    do {
+      const [nextCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+      keysToDelete.push(...keys);
+    } while (cursor !== '0');
+
+    if (keysToDelete.length > 0) {
+      await redis.del(...keysToDelete);
     }
   } catch (err) {
     console.error('Cache invalidation error:', err);

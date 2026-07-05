@@ -3,6 +3,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import morgan from 'morgan';
 import passport from 'passport';
+import helmet from 'helmet';
 import { generalRateLimiter } from './middlewares/rateLimiter';
 import { errorHandler } from './middlewares/errorHandler';
 import { env } from './config/env';
@@ -24,14 +25,17 @@ import adminRoutes from './routes/admin.routes';
 
 const app = express();
 
+// Security headers
+app.use(helmet());
+
 // Middleware
 app.use(cors({
   origin: env.CLIENT_URL,
   credentials: true,
 }));
 app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser());
 app.use(passport.initialize());
 app.use(generalRateLimiter);
