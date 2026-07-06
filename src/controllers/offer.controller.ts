@@ -168,3 +168,36 @@ export const deleteCategoryOffer = async (req: Request, res: Response, next: Nex
     next(error);
   }
 };
+
+// ─── Public Offers ───────────────────────────────────────────────────────────
+
+/** Returns all active product and category offers for the public storefront. */
+export const getActiveOffers = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const now = new Date();
+
+    const productOffers = await ProductOffer.find({
+      isDeleted: false,
+      isActive: true,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+    }).populate('product', 'name slug');
+
+    const categoryOffers = await CategoryOffer.find({
+      isDeleted: false,
+      isActive: true,
+      startDate: { $lte: now },
+      endDate: { $gte: now },
+    }).populate('category', 'name slug');
+
+    res.status(200).json({
+      success: true,
+      data: {
+        productOffers,
+        categoryOffers,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};

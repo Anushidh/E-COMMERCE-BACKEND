@@ -9,10 +9,15 @@ import {
   getAllCategoryOffers,
   updateCategoryOffer,
   deleteCategoryOffer,
+  getActiveOffers,
 } from '../controllers/offer.controller';
 
 const router = Router();
 
+// Public route for active offers
+router.get('/active', getActiveOffers);
+
+// Admin-only routes
 router.use(authenticate, adminOnly);
 
 // Product offers

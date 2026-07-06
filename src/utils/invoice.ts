@@ -182,11 +182,11 @@ export const generateInvoicePDF = async (order: IOrder, invoiceId: string): Prom
       doc.text(`${i + 1}`, x, currentY, { width: colWidths.sno, align: 'center' }); x += colWidths.sno;
       doc.text(`${item.productName} (${item.variantInfo})`, x, currentY, { width: colWidths.name }); x += colWidths.name;
       doc.text(`${item.quantity}`, x, currentY, { width: colWidths.qty, align: 'center' }); x += colWidths.qty;
-      doc.text(`₹${item.price.toFixed(2)}`, x, currentY, { width: colWidths.rate, align: 'right' }); x += colWidths.rate;
-      doc.text(`₹${taxableValue.toFixed(2)}`, x, currentY, { width: colWidths.taxable, align: 'right' }); x += colWidths.taxable;
+      doc.text(`Rs. ${item.price.toFixed(2)}`, x, currentY, { width: colWidths.rate, align: 'right' }); x += colWidths.rate;
+      doc.text(`Rs. ${taxableValue.toFixed(2)}`, x, currentY, { width: colWidths.taxable, align: 'right' }); x += colWidths.taxable;
       doc.text(`${item.gstRate}%`, x, currentY, { width: colWidths.gst, align: 'center' }); x += colWidths.gst;
-      doc.text(`₹${item.gstAmount.toFixed(2)}`, x, currentY, { width: colWidths.tax, align: 'right' }); x += colWidths.tax;
-      doc.text(`₹${item.finalPrice.toFixed(2)}`, x, currentY, { width: colWidths.total, align: 'right' });
+      doc.text(`Rs. ${item.gstAmount.toFixed(2)}`, x, currentY, { width: colWidths.tax, align: 'right' }); x += colWidths.tax;
+      doc.text(`Rs. ${item.finalPrice.toFixed(2)}`, x, currentY, { width: colWidths.total, align: 'right' });
 
       currentY += rowHeight;
     }
@@ -218,10 +218,10 @@ export const generateInvoicePDF = async (order: IOrder, invoiceId: string): Prom
 
     for (const [rate, values] of Object.entries(taxGroups)) {
       if (order.isInterState) {
-        doc.text(`IGST @${rate}%: Taxable ₹${values.taxable.toFixed(2)} | Tax ₹${values.tax.toFixed(2)}`, leftMargin, currentY);
+        doc.text(`IGST @${rate}%: Taxable Rs. ${values.taxable.toFixed(2)} | Tax Rs. ${values.tax.toFixed(2)}`, leftMargin, currentY);
       } else {
         const half = values.tax / 2;
-        doc.text(`CGST @${Number(rate) / 2}%: ₹${half.toFixed(2)} | SGST @${Number(rate) / 2}%: ₹${half.toFixed(2)} (Taxable: ₹${values.taxable.toFixed(2)})`, leftMargin, currentY);
+        doc.text(`CGST @${Number(rate) / 2}%: Rs. ${half.toFixed(2)} | SGST @${Number(rate) / 2}%: Rs. ${half.toFixed(2)} (Taxable: Rs. ${values.taxable.toFixed(2)})`, leftMargin, currentY);
       }
       currentY += 12;
     }
@@ -242,17 +242,17 @@ export const generateInvoicePDF = async (order: IOrder, invoiceId: string): Prom
       currentY += 14;
     };
 
-    addTotalLine('Subtotal:', `₹${order.subtotal.toFixed(2)}`);
-    if (order.offerDiscount > 0) addTotalLine('Offer Discount:', `-₹${order.offerDiscount.toFixed(2)}`);
-    if (order.couponDiscount > 0) addTotalLine(`Coupon (${order.couponCode}):`, `-₹${order.couponDiscount.toFixed(2)}`);
-    if (order.walletAmountUsed > 0) addTotalLine('Wallet Used:', `-₹${order.walletAmountUsed.toFixed(2)}`);
-    if (order.shippingCharge > 0) addTotalLine('Shipping:', `₹${order.shippingCharge.toFixed(2)}`);
-    addTotalLine('Total Tax (incl.):', `₹${order.totalTax.toFixed(2)}`);
+    addTotalLine('Subtotal:', `Rs. ${order.subtotal.toFixed(2)}`);
+    if (order.offerDiscount > 0) addTotalLine('Offer Discount:', `-Rs. ${order.offerDiscount.toFixed(2)}`);
+    if (order.couponDiscount > 0) addTotalLine(`Coupon (${order.couponCode}):`, `-Rs. ${order.couponDiscount.toFixed(2)}`);
+    if (order.walletAmountUsed > 0) addTotalLine('Wallet Used:', `-Rs. ${order.walletAmountUsed.toFixed(2)}`);
+    if (order.shippingCharge > 0) addTotalLine('Shipping:', `Rs. ${order.shippingCharge.toFixed(2)}`);
+    addTotalLine('Total Tax (incl.):', `Rs. ${order.totalTax.toFixed(2)}`);
 
     currentY += 2;
     doc.moveTo(totalsX, currentY).lineTo(totalsX + 130, currentY).stroke();
     currentY += 6;
-    addTotalLine('Grand Total:', `₹${order.totalAmount.toFixed(2)}`, true);
+    addTotalLine('Grand Total:', `Rs. ${order.totalAmount.toFixed(2)}`, true);
 
     // ─── Footer ──────────────────────────────────────────────────────────────
 
@@ -265,6 +265,17 @@ export const generateInvoicePDF = async (order: IOrder, invoiceId: string): Prom
     doc.fontSize(7).font('Helvetica').fillColor('#666666');
     doc.text('This is a computer-generated invoice and does not require a physical signature.', leftMargin, currentY);
     doc.text('For returns and refund policy, please visit wearhaus.com.', leftMargin, currentY + 10);
+
+    // Watermark (small text at bottom)
+    const oldBottomMargin = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+    doc.fontSize(10).font('Helvetica-Bold').fillColor('#CCCCCC');
+    doc.text(env.COMPANY_NAME.toUpperCase(), leftMargin, doc.page.height - 25, { 
+      width: doc.page.width - leftMargin * 2, 
+      align: 'center',
+      lineBreak: false
+    });
+    doc.page.margins.bottom = oldBottomMargin;
 
     doc.end();
   });
