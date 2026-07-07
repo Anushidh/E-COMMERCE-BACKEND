@@ -6,6 +6,7 @@ import Admin from '../models/Admin';
 import OTPRecord from '../models/OTPRecord';
 import Wallet from '../models/Wallet';
 import Referral from '../models/Referral';
+import WalletTransaction from '../models/WalletTransaction';
 import { AppError } from '../utils/AppError';
 import { generateOTP } from '../utils/helpers';
 import { sendOTPEmail } from '../utils/email';
@@ -97,16 +98,42 @@ export const verifySignupOTP = async (req: Request, res: Response, next: NextFun
 
     let user: any;
     try {
+      let referrer: any = null;
+      if (parsed.referralCode) {
+        referrer = await User.findOne({ referralCode: parsed.referralCode, isDeleted: false }).session(session);
+      }
+
       [user] = await User.create([{
         name: parsed.name,
         email: parsed.email,
         password: parsed.password,
         phone: parsed.phone,
         isVerified: true,
-        referredBy: parsed.referralCode,
+        referredBy: referrer ? parsed.referralCode : undefined,
       }], { session });
 
-      await Wallet.create([{ user: user._id }], { session });
+      const initialBalance = referrer ? 50 : 0;
+      const [wallet] = await Wallet.create([{ user: user._id, balance: initialBalance }], { session });
+
+      if (initialBalance > 0) {
+        await WalletTransaction.create([{
+          wallet: wallet._id,
+          user: user._id,
+          type: 'credit',
+          amount: initialBalance,
+          description: 'Signup bonus using referral code',
+          reference: `SIGNUP-${user._id}`
+        }], { session });
+      }
+
+      if (referrer) {
+        await Referral.create([{
+          referrer: referrer._id,
+          referee: user._id,
+          status: 'Pending',
+          rewardAmount: env.REFERRAL_REWARD_AMOUNT,
+        }], { session });
+      }
 
       await session.commitTransaction();
     } catch (err) {
@@ -114,19 +141,6 @@ export const verifySignupOTP = async (req: Request, res: Response, next: NextFun
       throw err;
     } finally {
       session.endSession();
-    }
-
-    // Handle referral — create pending referral record (outside transaction, non-critical)
-    if (parsed.referralCode) {
-      const referrer = await User.findOne({ referralCode: parsed.referralCode, isDeleted: false });
-      if (referrer) {
-        await Referral.create({
-          referrer: referrer._id,
-          referee: user._id,
-          status: 'Pending',
-          rewardAmount: env.REFERRAL_REWARD_AMOUNT,
-        });
-      }
     }
 
     // Cleanup temporary Redis/OTP data

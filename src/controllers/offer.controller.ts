@@ -56,16 +56,36 @@ export const getAllProductOffers = async (_req: Request, res: Response, next: Ne
 export const updateProductOffer = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = updateProductOfferSchema.parse(req.body);
+    
+    const offerToUpdate = await ProductOffer.findById(req.params.id);
+    if (!offerToUpdate || offerToUpdate.isDeleted) {
+      throw new AppError('Product offer not found', 404);
+    }
+
+    // Only validate overlap if updating dates
+    if (data.startDate && data.endDate) {
+      const existingOffer = await ProductOffer.findOne({
+        _id: { $ne: req.params.id },
+        product: data.product || offerToUpdate.product,
+        isDeleted: false,
+        isActive: true,
+        startDate: { $lte: new Date(data.endDate) },
+        endDate: { $gte: new Date(data.startDate) },
+      });
+      if (existingOffer) {
+        throw new AppError('An active offer already exists for this product in the given date range', 400);
+      }
+    }
+
     const updateData: any = { ...data };
     if (data.startDate) updateData.startDate = new Date(data.startDate);
     if (data.endDate) updateData.endDate = new Date(data.endDate);
 
-    const offer = await ProductOffer.findOneAndUpdate(
-      { _id: req.params.id, isDeleted: false },
+    const offer = await ProductOffer.findByIdAndUpdate(
+      req.params.id,
       updateData,
       { new: true }
     );
-    if (!offer) throw new AppError('Product offer not found', 404);
 
     res.status(200).json({ success: true, data: offer });
   } catch (error) {
@@ -136,16 +156,35 @@ export const getAllCategoryOffers = async (_req: Request, res: Response, next: N
 export const updateCategoryOffer = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const data = updateCategoryOfferSchema.parse(req.body);
+    
+    const offerToUpdate = await CategoryOffer.findById(req.params.id);
+    if (!offerToUpdate || offerToUpdate.isDeleted) {
+      throw new AppError('Category offer not found', 404);
+    }
+
+    if (data.startDate && data.endDate) {
+      const existingOffer = await CategoryOffer.findOne({
+        _id: { $ne: req.params.id },
+        category: data.category || offerToUpdate.category,
+        isDeleted: false,
+        isActive: true,
+        startDate: { $lte: new Date(data.endDate) },
+        endDate: { $gte: new Date(data.startDate) },
+      });
+      if (existingOffer) {
+        throw new AppError('An active offer already exists for this category in the given date range', 400);
+      }
+    }
+
     const updateData: any = { ...data };
     if (data.startDate) updateData.startDate = new Date(data.startDate);
     if (data.endDate) updateData.endDate = new Date(data.endDate);
 
-    const offer = await CategoryOffer.findOneAndUpdate(
-      { _id: req.params.id, isDeleted: false },
+    const offer = await CategoryOffer.findByIdAndUpdate(
+      req.params.id,
       updateData,
       { new: true }
     );
-    if (!offer) throw new AppError('Category offer not found', 404);
 
     res.status(200).json({ success: true, data: offer });
   } catch (error) {

@@ -199,6 +199,11 @@ export const placeOrder = async (req: Request, res: Response, next: NextFunction
       throw new AppError('Cash on Delivery is only available for orders above ₹500', 400);
     }
 
+    // Minimum cart value validation
+    if (totalAmount < 50 && data.paymentMethod !== 'wallet') {
+      throw new AppError('Minimum payable amount must be ₹50 to checkout', 400);
+    }
+
     // Wallet-only payment: totalAmount should be 0 (wallet covers everything)
     const paymentStatus = data.paymentMethod === 'wallet' ? 'Paid' : 'Pending';
 
@@ -680,7 +685,7 @@ export const cancelOrder = async (req: Request, res: Response, next: NextFunctio
             type: 'credit',
             amount: refundAmount,
             description: `Refund for cancelled order ${order.orderId}`,
-            reference: order.orderId,
+            reference: `REFUND-${order.orderId}`,
           }], { session });
         }
 

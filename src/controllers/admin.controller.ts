@@ -267,8 +267,59 @@ export const updateOrderStatus = async (req: Request, res: Response, next: NextF
       );
     }
 
-    order.orderStatus = status;
+    if (status === 'Cancelled') {
+      const session = await mongoose.startSession();
+      session.startTransaction();
+      try {
+        order.orderStatus = 'Cancelled';
+        order.statusHistory.push({ status: 'Cancelled', timestamp: new Date(), note: 'Cancelled by admin' });
+
+        for (const item of order.items) {
+          await Variant.findByIdAndUpdate(item.variant, { $inc: { stock: item.quantity } }, { session });
+          await Product.findByIdAndUpdate(item.product, { $inc: { totalSold: -item.quantity } }, { session });
+        }
+
+        if (order.couponCode) {
+          await Coupon.findOneAndUpdate({ code: order.couponCode, isDeleted: false }, { $inc: { totalUsed: -1 } }, { session });
+          await Coupon.findOneAndUpdate({ code: order.couponCode, 'usedBy.user': order.user }, { $inc: { 'usedBy.$.count': -1 } }, { session });
+        }
+
+        let refundAmount = 0;
+        const wasPaidOnline = order.paymentStatus === 'Paid' && order.paymentMethod !== 'cod';
+        if (wasPaidOnline || order.walletAmountUsed > 0) {
+          refundAmount = wasPaidOnline ? safeAdd(order.totalAmount, order.walletAmountUsed) : order.walletAmountUsed;
+          if (refundAmount > 0) {
+            const wallet = await Wallet.findOneAndUpdate(
+              { user: order.user }, { $inc: { balance: refundAmount } }, { new: true, upsert: true, session }
+            );
+            await WalletTransaction.create([{
+              wallet: wallet._id, user: order.user, type: 'credit', amount: refundAmount,
+              description: `Refund for cancelled order ${order.orderId}`, reference: `REFUND-${order.orderId}`,
+            }], { session });
+            order.paymentStatus = 'Refunded';
+          }
+        }
+
+        await order.save({ session });
+        await session.commitTransaction();
+        session.endSession();
+
+        const orderUser = await User.findById(order.user);
+        if (orderUser && refundAmount > 0) await sendRefundEmail(orderUser.email, order.orderId, refundAmount);
+        else if (orderUser) await sendOrderStatusEmail(orderUser.email, order.orderId, status);
+
+        res.status(200).json({ success: true, message: `Order status updated to ${status}` });
+        return;
+      } catch (err) {
+        await session.abortTransaction();
+        session.endSession();
+        throw err;
+      }
+    }
+
+    order.orderStatus = status as any;
     order.statusHistory.push({ status, timestamp: new Date() });
+    
     if (status === 'Delivered') {
       order.deliveredAt = new Date();
       if (order.paymentMethod === 'cod') {
@@ -387,7 +438,7 @@ export const handleReturn = async (req: Request, res: Response, next: NextFuncti
         type: 'credit',
         amount: refundAmount,
         description: `Refund for returned order ${order.orderId}`,
-        reference: order.orderId,
+        reference: `REFUND-${order.orderId}`,
       }], { session });
 
       await order.save({ session });
@@ -479,7 +530,7 @@ export const handleCancellation = async (req: Request, res: Response, next: Next
             type: 'credit',
             amount: refundAmount,
             description: `Refund for cancelled order ${order.orderId}`,
-            reference: order.orderId,
+            reference: `REFUND-${order.orderId}`,
           }], { session });
 
           order.paymentStatus = 'Refunded';

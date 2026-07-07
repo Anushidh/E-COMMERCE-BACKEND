@@ -286,19 +286,32 @@ export const generateInvoicePDF = async (order: IOrder, invoiceId: string): Prom
  * and returns the invoice document with the PDF URL.
  */
 export const createInvoice = async (order: IOrder): Promise<{ invoiceId: string; pdfUrl: string }> => {
-  const invoiceId = await generateInvoiceId();
+  // Prevent race condition if called simultaneously
+  const existingInvoice = await Invoice.findOne({ order: order._id });
+  if (existingInvoice) {
+    return { invoiceId: existingInvoice.invoiceId, pdfUrl: existingInvoice.pdfUrl || '' };
+  }
 
+  const invoiceId = await generateInvoiceId();
   const pdfUrl = await generateInvoicePDF(order, invoiceId);
 
-  await Invoice.create({
-    invoiceId,
-    order: order._id,
-    user: order.user,
-    invoiceDate: new Date(),
-    pdfUrl,
-    totalAmount: order.totalAmount,
-    totalTax: order.totalTax,
-  });
+  try {
+    await Invoice.create({
+      invoiceId,
+      order: order._id,
+      user: order.user,
+      invoiceDate: new Date(),
+      pdfUrl,
+      totalAmount: order.totalAmount,
+      totalTax: order.totalTax,
+    });
+  } catch (error: any) {
+    if (error.code === 11000) {
+      const finalInvoice = await Invoice.findOne({ order: order._id });
+      if (finalInvoice) return { invoiceId: finalInvoice.invoiceId, pdfUrl: finalInvoice.pdfUrl || '' };
+    }
+    throw error;
+  }
 
   return { invoiceId, pdfUrl };
 };

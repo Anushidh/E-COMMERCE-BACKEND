@@ -3,7 +3,13 @@ import { z } from 'zod';
 const baseOfferFields = {
   discountType: z.enum(['percentage', 'flat']),
   discountValue: z.number().min(1),
-  startDate: z.string().refine((val) => !isNaN(Date.parse(val)), 'Invalid date'),
+  startDate: z.string()
+    .refine((val) => !isNaN(Date.parse(val)), 'Invalid date')
+    .refine((val) => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return new Date(val) >= today;
+    }, 'Start date cannot be in the past'),
   endDate: z.string().refine((val) => !isNaN(Date.parse(val)), 'Invalid date'),
   isActive: z.boolean().optional(),
 };
@@ -14,7 +20,11 @@ export const createProductOfferSchema = z.object({
 }).refine((data) => {
   if (data.discountType === 'percentage' && data.discountValue > 100) return false;
   return true;
-}, { message: 'Percentage discount cannot exceed 100%', path: ['discountValue'] });
+}, { message: 'Percentage discount cannot exceed 100%', path: ['discountValue'] })
+.refine((data) => new Date(data.endDate) >= new Date(data.startDate), {
+  message: 'End date must be after start date',
+  path: ['endDate'],
+});
 
 export const createCategoryOfferSchema = z.object({
   category: z.string().min(1),
@@ -22,7 +32,11 @@ export const createCategoryOfferSchema = z.object({
 }).refine((data) => {
   if (data.discountType === 'percentage' && data.discountValue > 100) return false;
   return true;
-}, { message: 'Percentage discount cannot exceed 100%', path: ['discountValue'] });
+}, { message: 'Percentage discount cannot exceed 100%', path: ['discountValue'] })
+.refine((data) => new Date(data.endDate) >= new Date(data.startDate), {
+  message: 'End date must be after start date',
+  path: ['endDate'],
+});
 
 export const updateProductOfferSchema = z.object({
   product: z.string().min(1).optional(),
