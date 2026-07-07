@@ -17,6 +17,7 @@ import {
   getAbandonedCarts,
   triggerCartAbandonmentCheck,
 } from '../controllers/admin.controller';
+import { getOrderById, getOrderInvoice } from '../controllers/order.controller';
 
 const router = Router();
 
@@ -40,6 +41,8 @@ router.patch('/users/:id/unblock', unblockUser);
 
 // Orders
 router.get('/orders', getAllOrders);
+router.get('/orders/:id', getOrderById);
+router.get('/orders/:id/invoice', getOrderInvoice);
 router.patch('/orders/:id/status', updateOrderStatus);
 router.patch('/orders/:id/return', handleReturn);
 router.patch('/orders/:id/cancel', handleCancellation);
