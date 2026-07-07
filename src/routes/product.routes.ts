@@ -16,6 +16,8 @@ import {
   adjustStock,
   trackProductView,
   getRecentlyViewed,
+  getAdminProducts,
+  restoreProduct,
 } from '../controllers/product.controller';
 
 const router = Router();
@@ -30,8 +32,10 @@ router.post('/:productId/view', authenticate, trackProductView);
 router.get('/user/recently-viewed', authenticate, getRecentlyViewed);
 
 // Admin only
+router.get('/admin/all', authenticate, adminOnly, getAdminProducts);
 router.post('/', authenticate, adminOnly, upload.array('productImages', 10), createProduct);
 router.put('/:id', authenticate, adminOnly, upload.array('productImages', 10), updateProduct);
+router.patch('/:id/restore', authenticate, adminOnly, restoreProduct);
 router.delete('/:id', authenticate, adminOnly, deleteProduct);
 router.patch('/:id/remove-image', authenticate, adminOnly, removeProductImage);
 

@@ -507,6 +507,89 @@ const adjustStockSchema = z.object({
   adjustment: z.number().int().min(-10000).max(10000).refine((v) => v !== 0, 'Adjustment must be non-zero'),
 });
 
+/** Lists products specifically for Admin with ability to include soft-deleted items. */
+export const getAdminProducts = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const filters = productFilterSchema.parse(req.query);
+    const includeDeleted = req.query.includeDeleted === 'true';
+
+    const page = parseInt(filters.page || '1', 10);
+    const limit = Math.min(parseInt(filters.limit || '12', 10), 50);
+    const { skip } = paginationHelper(page, limit);
+
+    const query: any = {};
+    if (includeDeleted) {
+      query.isDeleted = true;
+    } else {
+      query.isDeleted = false;
+    }
+
+    if (filters.status && filters.status !== 'all') {
+      query.status = filters.status;
+    }
+
+    if (filters.category) query.category = filters.category;
+    if (filters.gender) query.gender = filters.gender;
+    if (filters.minPrice || filters.maxPrice) {
+      query.basePrice = {};
+      if (filters.minPrice) query.basePrice.$gte = parseFloat(filters.minPrice);
+      if (filters.maxPrice) query.basePrice.$lte = parseFloat(filters.maxPrice);
+    }
+    if (filters.search) {
+      const escapedSearch = filters.search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.$or = [
+        { name: { $regex: escapedSearch, $options: 'i' } },
+        { brand: { $regex: escapedSearch, $options: 'i' } },
+        { description: { $regex: escapedSearch, $options: 'i' } },
+      ];
+    }
+
+    let sortObj: any = { createdAt: -1 };
+    if (filters.sort === 'price_asc') sortObj = { basePrice: 1 };
+    else if (filters.sort === 'price_desc') sortObj = { basePrice: -1 };
+    else if (filters.sort === 'newest') sortObj = { createdAt: -1 };
+
+    const [products, total] = await Promise.all([
+      Product.find(query).populate('category', 'name').sort(sortObj).skip(skip).limit(limit),
+      Product.countDocuments(query),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        products,
+        pagination: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+        },
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** Restores a soft-deleted product and its variants. */
+export const restoreProduct = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const product = await Product.findOneAndUpdate(
+      { _id: req.params.id, isDeleted: true },
+      { isDeleted: false },
+      { new: true }
+    );
+    if (!product) throw new AppError('Product not found or not deleted', 404);
+
+    await Variant.updateMany({ product: product._id }, { isDeleted: false });
+
+    await invalidateCache('cache:/api/products*');
+    res.status(200).json({ success: true, message: 'Product restored successfully', data: product });
+  } catch (error) {
+    next(error);
+  }
+};
+
 /**
  * Tracks a product view for the authenticated user.
  * Maintains a capped list of the last 20 viewed products (most recent first).

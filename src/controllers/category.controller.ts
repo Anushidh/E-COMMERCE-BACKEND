@@ -100,3 +100,37 @@ export const deleteCategory = async (req: Request, res: Response, next: NextFunc
     next(error);
   }
 };
+
+/** Returns all categories for the admin dashboard, optionally including soft-deleted ones. */
+export const getAdminCategories = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const includeDeleted = req.query.includeDeleted === 'true';
+    const query: any = {};
+    if (includeDeleted) {
+      query.isDeleted = true;
+    } else {
+      query.isDeleted = false;
+    }
+    const categories = await Category.find(query).sort({ name: 1 });
+    res.status(200).json({ success: true, data: categories });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/** Restores a soft-deleted category. */
+export const restoreCategory = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const category = await Category.findOneAndUpdate(
+      { _id: req.params.id, isDeleted: true },
+      { isDeleted: false },
+      { new: true }
+    );
+    if (!category) throw new AppError('Category not found or not deleted', 404);
+
+    await invalidateCache('cache:/api/categories*');
+    res.status(200).json({ success: true, message: 'Category restored successfully', data: category });
+  } catch (error) {
+    next(error);
+  }
+};

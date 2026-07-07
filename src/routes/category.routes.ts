@@ -8,6 +8,8 @@ import {
   getCategoryById,
   updateCategory,
   deleteCategory,
+  getAdminCategories,
+  restoreCategory,
 } from '../controllers/category.controller';
 
 const router = Router();
@@ -17,8 +19,10 @@ router.get('/', cache(60), getAllCategories);
 router.get('/:id', cache(60), getCategoryById);
 
 // Admin only
+router.get('/admin/all', authenticate, adminOnly, getAdminCategories);
 router.post('/', authenticate, adminOnly, upload.single('categoryImage'), createCategory);
 router.put('/:id', authenticate, adminOnly, upload.single('categoryImage'), updateCategory);
+router.patch('/:id/restore', authenticate, adminOnly, restoreCategory);
 router.delete('/:id', authenticate, adminOnly, deleteCategory);
 
 export default router;

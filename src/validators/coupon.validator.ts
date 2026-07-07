@@ -15,6 +15,7 @@ const baseCouponSchema = z.object({
       today.setHours(0, 0, 0, 0);
       return new Date(val) >= today;
     }, 'Expiry date cannot be in the past'),
+  isActive: z.boolean().optional(),
 });
 
 export const createCouponSchema = baseCouponSchema.refine((data) => {
