@@ -1,196 +1,66 @@
-# E-Commerce Backend API
+# Wearhaus Backend API
 
-A full-featured e-commerce backend built with **Node.js**, **Express**, **TypeScript**, and **MongoDB**.
+A mathematically precise, full-featured e-commerce backend built with **Node.js**, **Express**, **TypeScript**, and **MongoDB**. This engine is designed to mimic enterprise-grade e-commerce operations, featuring advanced inventory locks, cryptographic payment verifications, and strict atomic transactions.
 
 ---
 
-## Tech Stack
+## 🛠️ The Technology Stack
 
 - **Runtime:** Node.js + TypeScript
 - **Framework:** Express.js
-- **Database:** MongoDB (Mongoose ODM)
-- **Cache/Store:** Redis (ioredis)
+- **Database:** MongoDB (Mongoose) with strict `Session` Transactions
+- **Cache/Store:** Redis (ioredis) for OTPs and session blacklisting
 - **Authentication:** JWT (access + refresh tokens), Google OAuth 2.0 (Passport.js)
 - **Payments:** Razorpay (online) + Cash on Delivery
-- **Image Uploads:** Multer + Cloudinary
+- **Image Uploads:** Multer + Cloudinary (Stateless processing)
 - **Email:** Nodemailer (SMTP)
 - **Validation:** Zod
-- **Precision Math:** Decimal.js
+- **Precision Math:** `decimal.js` (Bypassing IEEE 754 floating-point errors)
 - **Logging:** Morgan
 - **Rate Limiting:** express-rate-limit
 
 ---
 
-## Features
+## 📦 Core Architecture & Modules
 
-### Auth & User Management
+The backend is heavily modularized. Detailed technical documentation for each component can be found in the root `modules/` directory.
 
-- Email/password signup with OTP verification (stored in Redis)
-- Google OAuth 2.0 login via Passport.js
-- JWT access + refresh token strategy
-- Forgot password via email OTP reset
-- Resend OTP with cooldown (60s) + expiry (5 min)
-- Logout with token blacklisting (Redis)
-- View/edit profile (name, phone, avatar upload)
-- Multiple delivery addresses (add, edit, delete, set default)
-- Change password
+### 1. Catalog & Inventory Management
+- **Products & Categories**: Hierarchical taxonomy with soft-delete patterns.
+- **Variant-Level Stock**: Inventory is tracked strictly at the Size/Color level. Stock is atomically decremented upon order placement to prevent overselling.
+- **Garbage-Collected Uploads**: Stateless Cloudinary streaming architecture prevents the local disk from filling up with temporary files.
 
-### Products & Catalog
+### 2. The Calculation Engine (Finance & Taxes)
+- **Zero Floating-Point Errors**: All financial operations (Cart totals, Wallets, Coupons, Taxes) use `decimal.js`.
+- **MRP-First Tax Extraction**: GST (CGST/SGST vs IGST) is reverse-calculated from inclusive MRPs based on shipping state borders (Maharashtra).
+- **Wallet & Referrals**: Atomic ledger tracking for refunds, promotional credits, and referral rewards (which are strictly held in escrow until an order is officially `Delivered`).
 
-- Create/edit/delete products (admin) with multiple image uploads (Cloudinary)
-- Soft delete products and variants
-- Product gender targeting: Men / Women / Unisex
-- Product variants — size, color, stock per variant
-- Product status: Active / Inactive / Out of Stock (auto-updated)
-- Related products (same category)
-- Full-text product search
-- Category CRUD with image upload and gender assignment
+### 3. Promotions & Discounts
+- **Multi-Tiered Offers**: Global Category Offers and specific Product Offers auto-calculate the best possible discount for the user.
+- **Coupon Logic**: Supports minimum cart thresholds, maximum discount caps, and usage frequency limits.
 
-### Filters & Search
+### 4. Payments & Order Lifecycle
+- **Strict State Machine**: Orders follow a strict, one-way sequential flow: `Placed` → `Confirmed` → `Shipped` → `Out for Delivery` → `Delivered`.
+- **Razorpay Cryptography**: Webhook signatures are verified using `crypto` to prevent spoofed payment confirmations.
+- **Automated PDF Invoices**: Programmatic `pdfkit` generation creates dynamic, paginated invoices with Financial Year sequence formatting (e.g., `ORD-FY24-X8J9`).
 
-- Filter by: category, gender, price range, size, color, rating, availability
-- Sort by: price (asc/desc), newest, popularity, rating
-- Full-text search on product name, description, brand
-- Pagination on all list endpoints
-
-### Cart
-
-- Add / remove / update quantity
-- Variant-aware cart items (size + color)
-- Auto-recalculate totals (Decimal.js precision)
-- Stock validation on add and at checkout
-
-### Wishlist
-
-- Add/remove products
-- Move to cart (with variant selection)
-- Persists across sessions
-
-### Orders & Checkout
-
-- Select address → review cart → apply coupon → place order
-- Stock deduction on order placement
-- Unique readable order ID generation (e.g., `ORD-LX3F2A-4B7C9E`)
-- Razorpay integration (online payment with signature verification)
-- Cash on Delivery support
-- Payment status tracking: Pending / Paid / Failed / Refunded
-- Webhook handling for Razorpay payment confirmation
-- View order history (paginated)
-- Order detail page with populated product/variant info
-- Order status flow: Placed → Confirmed → Shipped → Out for Delivery → Delivered
-- Cancel order (before shipped) — restores stock, refunds to wallet
-- Return/refund request (after delivered)
-
-### Offers & Discounts
-
-- **Product Offers:** Admin creates % or flat discount on specific products with start/end date
-- **Category Offers:** Admin creates offer on an entire category
-- **Offer Priority:** If both exist, the better discount is applied automatically
-- **Coupon System:**
-  - Code, discount type (% or flat), min order value, max discount cap
-  - Usage limit per user + total usage limit
-  - Expiry date validation
-  - Preview coupon discount before checkout
-- Coupons stack on top of best offer
-- Soft delete for all offers and coupons
-
-### Referrals
-
-- Unique referral code per user (auto-generated on signup)
-- Referee signs up + completes first order → referrer gets wallet credit
-- Track referral status: Pending / Rewarded
-- Referral stats (total, pending, rewarded)
-
-### Wallet
-
-- Wallet balance per user
-- Credit from: referrals, refunds, cancelled orders
-- Use wallet at checkout (full or partial deduction)
-- Wallet transaction history (paginated)
-
-### Ratings & Reviews
-
-- Review only after a delivered order (enforced)
-- Rating (1–5) + text review
-- One review per product per order
-- Admin can soft-delete reviews
-- Average rating auto-computed per product
-
-### Admin Dashboard
-
-**Analytics:**
-- Total revenue (daily / weekly / monthly / yearly)
-- Total orders by status
-- Top 10 selling products
-- Top 10 selling categories (by quantity + revenue)
-- New users over time (last 30 days)
-- Best coupon usage stats
-- Revenue chart data (monthly, for frontend charts)
-
-**Management:**
-- User list — search, block/unblock
-- Product management (CRUD + soft delete)
-- Category management (CRUD + soft delete)
-- Order management — view all, filter by status, update status
-- Coupon management (CRUD + soft delete)
-- Offer management — product offers + category offers
-- Review moderation (soft delete)
-- Handle return/refund requests (approve/reject)
-
-### Inventory
-
-- Stock tracked per variant (size + color)
-- Low stock alerts (configurable threshold)
-- Out of stock auto-status on product when all variants hit 0
-
-### Notifications (Email)
-
-- OTP verification email
-- Order confirmation email
-- Order status update emails
-- Refund confirmation email
+### 5. Background Automation (Cron Jobs)
+- **The Cart Sweeper**: Automatically flags abandoned carts.
+- **The Inventory Liberator**: Automatically cancels stale, unpaid Razorpay orders after 30 minutes, releasing locked stock back into the live inventory.
 
 ---
 
-## Technical Highlights
+## 🔒 Technical Highlights & Security
 
-- **Decimal.js** for all price calculations — no floating point issues
-- **Soft delete pattern** across all major collections
-- **Centralized error handling** middleware (AppError, Zod, JWT, CastError)
-- **Input validation** with Zod schemas on all endpoints
-- **Rate limiting** on auth and OTP routes
-- **Role-based route guards** (admin / user middleware)
-- **ENV-based config** management with sensible defaults
-- **Request logging** with Morgan (dev/combined modes)
-- **Mongoose indexes** for performance on all query-heavy fields
+- **Mongoose Sessions**: Complex operations (like checking out with a Wallet + Razorpay + Stock reduction) are wrapped in `mongo.startSession()`. If any step fails, the entire transaction rolls back.
+- **Role-Based Guards**: Strict `userOnly` and `adminOnly` middlewares protect sensitive routes.
+- **Token Blacklisting**: Logout instantly pushes the JWT to a Redis blacklist to prevent replay attacks.
+- **Zod Validation**: 100% of incoming payloads are validated at the router level.
+- **Debounced Search**: The API is optimized to handle rapid frontend debounce bursts.
 
 ---
 
-## Project Structure
-
-```
-src/
-├── config/          # DB, Redis, Cloudinary, Passport, Multer, env
-├── controllers/     # Route handlers (auth, user, product, cart, order, etc.)
-├── middlewares/     # Auth, error handler, rate limiters
-├── models/          # Mongoose schemas (User, Product, Variant, Order, etc.)
-├── routes/          # Express route definitions
-├── types/           # TypeScript type augmentations
-├── utils/           # Helpers, email, token, AppError
-├── validators/      # Zod validation schemas
-├── app.ts           # Express app setup
-└── server.ts        # Entry point — connects DB and starts server
-```
-
----
-
-## Collections
-
-Users, Products, Categories, Variants, Cart, Wishlist, Orders, Payments, Coupons, ProductOffers, CategoryOffers, Reviews, Wallet, WalletTransactions, Referrals, OTPRecords
-
----
-
-## Getting Started
+## 🚀 Getting Started
 
 ```bash
 # Install dependencies
@@ -208,19 +78,16 @@ npm start
 ```
 
 ### Prerequisites
-
 - Node.js 18+
 - MongoDB (local or Atlas)
 - Redis (local or cloud)
-- Cloudinary account
-- Razorpay account (for payments)
-- SMTP credentials (for emails)
+- Cloudinary, Razorpay, and SMTP credentials.
 
 ---
 
-## API Base URL
+## 🌐 API Base URL
 
-```
+```text
 http://localhost:5000/api
 ```
 
