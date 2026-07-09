@@ -463,7 +463,6 @@ export const handleReturn = async (req: Request, res: Response, next: NextFuncti
   }
 };
 
-// ─── Dashboard Analytics ─────────────────────────────────────────────────────
 
 /**
  * Handles a cancellation request: approve (refund to wallet + restore stock + restore coupon)
@@ -568,6 +567,8 @@ export const handleCancellation = async (req: Request, res: Response, next: Next
     session.endSession();
   }
 };
+
+// ─── Dashboard Analytics ─────────────────────────────────────────────────────
 
 /**
  * Returns comprehensive admin dashboard data including revenue, top products,
