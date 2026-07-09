@@ -228,8 +228,8 @@ export const refreshToken = async (req: Request, res: Response, next: NextFuncti
 
     // Verify account still exists and is active
     if (payload.role === 'admin') {
-      const admin = await Admin.findById(payload.userId).select('isDeleted');
-      if (!admin || admin.isDeleted) throw new AppError('Account not found', 401);
+      const admin = await Admin.findById(payload.userId);
+      if (!admin) throw new AppError('Account not found', 401);
     } else {
       const user = await User.findById(payload.userId).select('isBlocked isDeleted');
       if (!user || user.isDeleted) throw new AppError('Account not found', 401);

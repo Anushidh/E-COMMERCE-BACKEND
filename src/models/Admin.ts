@@ -6,7 +6,6 @@ export interface IAdmin extends Document {
   email: string;
   password: string;
   avatar?: string;
-  isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -23,7 +22,6 @@ const adminSchema = new Schema<IAdmin>(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, select: false },
     avatar: { type: String },
-    isDeleted: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

@@ -31,9 +31,9 @@ export const authenticate = async (
 
     // Verify account still exists and is valid based on role
     if (decoded.role === 'admin') {
-      const admin = await Admin.findById(decoded.userId).select('isDeleted');
-      if (!admin || admin.isDeleted) {
-        throw new AppError('Admin not found', 401);
+      const admin = await Admin.findById(decoded.userId);
+      if (!admin) {
+        return next(new AppError('The user belonging to this token no longer exists.', 401));
       }
     } else {
       const user = await User.findById(decoded.userId).select('isBlocked isDeleted');

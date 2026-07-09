@@ -38,7 +38,7 @@ export const adminLogin = async (req: Request, res: Response, next: NextFunction
   try {
     const { email, password } = loginSchema.parse(req.body);
 
-    const admin = await Admin.findOne({ email, isDeleted: false }).select('+password');
+    const admin = await Admin.findOne({ email }).select('+password');
     if (!admin) {
       throw new AppError('Invalid email or password', 401);
     }

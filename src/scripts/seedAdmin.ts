@@ -7,7 +7,7 @@ import { env } from '../config/env';
  */
 export const seedAdmin = async (): Promise<void> => {
   try {
-    const existing = await Admin.findOne({ email: env.ADMIN_EMAIL, isDeleted: false });
+    const existing = await Admin.findOne({ email: env.ADMIN_EMAIL });
     if (!existing) {
       await Admin.create({
         name: env.ADMIN_NAME,
