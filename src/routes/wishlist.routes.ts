@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { authenticate } from '../middlewares/auth';
+import { authenticate, userOnly } from '../middlewares/auth';
 import {
   getWishlist,
   addToWishlist,
@@ -11,6 +11,7 @@ import {
 const router = Router();
 
 router.use(authenticate);
+router.use(userOnly);
 
 router.get('/', getWishlist);
 router.post('/', addToWishlist);
