@@ -62,6 +62,14 @@ export const errorHandler = (
     return;
   }
 
+  if ((err as any).code === 11000) {
+    res.status(400).json({
+      success: false,
+      message: 'A record with these unique details already exists.',
+    });
+    return;
+  }
+
   console.error('Unhandled error:', err);
   res.status(500).json({
     success: false,
