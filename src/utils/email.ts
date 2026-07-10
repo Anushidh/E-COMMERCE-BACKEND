@@ -1,15 +1,9 @@
-import nodemailer from 'nodemailer';
+import sgMail from '@sendgrid/mail';
 import { env } from '../config/env';
 
-const transporter = nodemailer.createTransport({
-  host: env.SMTP_HOST,
-  port: env.SMTP_PORT,
-  secure: false,
-  auth: {
-    user: env.SMTP_USER,
-    pass: env.SMTP_PASS,
-  },
-});
+sgMail.setApiKey(env.SENDGRID_API_KEY);
+
+const FROM = `${env.SMTP_FROM_NAME} <${env.FROM_EMAIL}>`;
 
 interface EmailOptions {
   to: string;
@@ -42,15 +36,24 @@ const emailFooter = `
   </div>
 `;
 
-/** Sends an email using the configured SMTP transporter. Supports optional file attachments. */
+/** Sends an email using SendGrid. Supports optional file attachments. */
 export const sendEmail = async (options: EmailOptions): Promise<void> => {
-  await transporter.sendMail({
-    from: `"Wearhaus" <${env.FROM_EMAIL}>`,
-    to: options.to,
-    subject: options.subject,
-    html: options.html,
-    attachments: options.attachments,
-  });
+  try {
+    await sgMail.send({
+      from: FROM,
+      to: options.to,
+      subject: options.subject,
+      html: options.html,
+      attachments: options.attachments?.map((a) => ({
+        filename: a.filename,
+        content: require('fs').readFileSync(a.path).toString('base64'),
+        type: 'application/pdf',
+        disposition: 'attachment',
+      })),
+    });
+  } catch (error) {
+    console.error(`Failed to send email to ${options.to}:`, error);
+  }
 };
 
 /** Sends an OTP verification email for signup or password reset. */

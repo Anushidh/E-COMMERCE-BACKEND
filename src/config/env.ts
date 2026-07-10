@@ -52,11 +52,9 @@ export const env = {
   CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || '',
   CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || '',
 
-  // SMTP (email delivery)
-  SMTP_HOST: process.env.SMTP_HOST || 'smtp.gmail.com',
-  SMTP_PORT: parseInt(process.env.SMTP_PORT || '587', 10),
-  SMTP_USER: process.env.SMTP_USER || '',
-  SMTP_PASS: process.env.SMTP_PASS || '',
+  // SendGrid (email delivery)
+  SENDGRID_API_KEY: process.env.SENDGRID_API_KEY || '',
+  SMTP_FROM_NAME: process.env.SMTP_FROM_NAME || 'Wearhaus',
   FROM_EMAIL: process.env.FROM_EMAIL || 'noreply@ecommerce.com',
 
   // Razorpay (payment gateway) — required in production
