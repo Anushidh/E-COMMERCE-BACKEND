@@ -4,6 +4,8 @@ import Variant from '../models/Variant';
 import ProductOffer from '../models/ProductOffer';
 import CategoryOffer from '../models/CategoryOffer';
 import RecentlyViewed from '../models/RecentlyViewed';
+import Category from '../models/Category';
+import mongoose from 'mongoose';
 import cloudinary from '../config/cloudinary';
 import { AppError } from '../utils/AppError';
 import {
@@ -215,7 +217,21 @@ export const getProducts = async (req: Request, res: Response, next: NextFunctio
       query.status = 'Active';
     }
 
-    if (filters.category) query.category = filters.category;
+    if (filters.category) {
+      if (mongoose.Types.ObjectId.isValid(filters.category)) {
+        query.category = filters.category;
+      } else {
+        const categoryDoc = await Category.findOne({ 
+          name: new RegExp(`^${filters.category}$`, 'i'), 
+          isDeleted: false 
+        });
+        if (categoryDoc) {
+          query.category = categoryDoc._id;
+        } else {
+          query.category = null;
+        }
+      }
+    }
     if (filters.gender) query.gender = filters.gender;
     if (filters.minPrice || filters.maxPrice) {
       query.basePrice = {};
