@@ -1,4 +1,5 @@
 import sgMail from '@sendgrid/mail';
+import fs from 'fs';
 import { env } from '../config/env';
 
 sgMail.setApiKey(env.SENDGRID_API_KEY);
@@ -46,7 +47,7 @@ export const sendEmail = async (options: EmailOptions): Promise<void> => {
       html: options.html,
       attachments: options.attachments?.map((a) => ({
         filename: a.filename,
-        content: require('fs').readFileSync(a.path).toString('base64'),
+        content: fs.readFileSync(a.path).toString('base64'),
         type: 'application/pdf',
         disposition: 'attachment',
       })),
